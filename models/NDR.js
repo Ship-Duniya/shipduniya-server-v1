@@ -2,7 +2,16 @@ const mongoose = require("mongoose");
 
 const NDRSchema = new mongoose.Schema(
   {
-    orderId: { type: String, required: true },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    shippingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Shipping",
+      required: true,
+    },
     awb: { type: String, required: true },
     courier: {
       type: String,
@@ -11,8 +20,8 @@ const NDRSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "delivered", "undelivered", "returned", "failed"],
-      default: "pending",
+      enum: ["actionRequired", "actionRequested", "delivered", "rto"],
+      default: "actionRequired",
     },
     failureReason: {
       type: String,
