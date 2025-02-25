@@ -204,10 +204,10 @@ const handleNDRAction = async (req, res) => {
     const normalizedCarrier = courier.toLowerCase().includes("xpressbees")
       ? "xpressbees"
       : courier.toLowerCase().includes("ecom")
-      ? "ecomexpress"
-      : courier.toLowerCase().includes("delhivery")
-      ? "delhivery"
-      : null;
+        ? "ecomexpress"
+        : courier.toLowerCase().includes("delhivery")
+          ? "delhivery"
+          : null;
 
     if (!normalizedCarrier) {
       return res.status(400).json({ message: `Unsupported carrier: ${courier}` });
@@ -280,44 +280,51 @@ const handleXpressBees = async (awb, action, action_data) => {
  * Handle EcomExpress NDR actions.
  */
 const handleEcomExpress = async (awb, action, action_data) => {
-  const actionMap = {
-    "re-attempt": "RAD",
-    cancel: "RTO",
-  };
+  try {
+    const actionMap = { "re-attempt": "RAD", "cancel": "RTO" };
+    const instruction = actionMap[action.toLowerCase()];
 
-  const instruction = actionMap[action];
-  if (!instruction) {
-    throw new Error(`Invalid action for EcomExpress: ${action}`);
+    if (!instruction) {
+      throw new Error(`Invalid action for EcomExpress: ${action}`);
+    }
+
+    if (!process.env.ECOM_USERNAME || !process.env.ECOM_PASSWORD) {
+      throw new Error("EcomExpress credentials are missing in environment variables.");
+    }
+
+    const payload = {
+      username: process.env.ECOM_USERNAME,
+      password: process.env.ECOM_PASSWORD,
+      json_input: JSON.stringify([
+        {
+          awb,
+          instruction,
+          comments: action_data.comments || "NDR resolution request",
+          ...(instruction === "RAD"
+            ? {
+              scheduled_delivery_date: action_data.scheduled_delivery_date || "",
+              scheduled_delivery_slot: action_data.scheduled_delivery_slot || "",
+            }
+            : {}),
+          ...(action_data.mobile && { mobile: action_data.mobile }),
+          ...parseAddressFields(action_data),
+        },
+      ]),
+    };
+
+    const response = await axios.post(
+      "https://clbeta.ecomexpress.in/apiv2/ndr_resolutions/",
+      new URLSearchParams(payload),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+
+    return parseEcomResponse(response, awb);
+  } catch (error) {
+    console.error(`EcomExpress API error: ${error.message}`);
+    throw error; // Rethrow for proper handling in caller function
   }
-
-  const payload = {
-    username: process.env.ECOM_USERNAME,
-    password: process.env.ECOM_PASSWORD,
-    json_input: JSON.stringify([
-      {
-        awb,
-        instruction,
-        comments: action_data.comments || "NDR resolution request",
-        ...(instruction === "RAD"
-          ? {
-            scheduled_delivery_date: action_data.scheduled_delivery_date || "",
-            scheduled_delivery_slot: action_data.scheduled_delivery_slot || "",
-          }
-          : {}),
-        ...(action_data.mobile && { mobile: action_data.mobile }),
-        ...parseAddressFields(action_data),
-      },
-    ]),
-  };
-
-  const response = await axios.post(
-    "https://clbeta.ecomexpress.in/apiv2/ndr_resolutions/",
-    new URLSearchParams(payload),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-  );
-
-  return parseEcomResponse(response, awb);
 };
+
 
 /**
  * Handle Delhivery NDR actions.
