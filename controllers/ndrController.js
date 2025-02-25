@@ -1,14 +1,135 @@
 const NDROrder = require("../models/NDR");
 const Order = require("../models/Order");
+const Shipping = require("../models/Shipping");
 const axios = require("axios");
 
 /**
  * Fetch all NDR orders and categorize them by courier.
  */
+const fetchNDROrdersForAdmin = async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.query; // Pagination support
+    const skip = (page - 1) * limit;
+
+    // Fetch NDR orders with shipping details
+    const ndrOrders = await NDROrder.find({ status: { $ne: "delivered" } })
+      .populate({
+        path: "shippingId",
+        populate: { path: "userId", select: "name address phone" }, // Fetch user details
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    // Group by user
+    const groupedOrders = {};
+    ndrOrders.forEach((ndrOrder) => {
+      const shipping = ndrOrder.shippingId;
+      if (!shipping || !shipping.userId) return; // Skip if no user details
+
+      const user = shipping.userId;
+      if (!groupedOrders[user._id]) {
+        groupedOrders[user._id] = {
+          user: {
+            _id: user._id,
+            name: user.name,
+            address: user.address,
+            phone: user.phone,
+          },
+          ndrOrders: [],
+        };
+      }
+      groupedOrders[user._id].ndrOrders.push(ndrOrder);
+    });
+
+    return res.status(200).json({
+      success: true,
+      users: Object.values(groupedOrders),
+      totalUsers: Object.keys(groupedOrders).length,
+      currentPage: Number(page),
+      totalPages: Math.ceil(ndrOrders.length / limit),
+    });
+  } catch (error) {
+    console.error("Error fetching NDR orders for admin:", error);
+    return res.status(500).json({ error: "Failed to fetch NDR orders." });
+  }
+};
+
+//above one is correct - ************************************************************
 // const fetchNDROrdersForAdmin = async (req, res) => {
 //   try {
-//     const orders = await NDROrder.find();
-//     const groupedOrders = groupOrdersByCourier(orders);
+//     // Hardcoded orders for each courier
+//     const hardcodedOrders = {
+//       xpressbees: [
+//         {
+//           orderId: "ORDER-1739605146868", // Replace with real order ID
+//           awb: "XB123456789",
+//           shipmentId: "SHIPMENT-123",
+//           courier: "xpressbees",
+//           status: "pending",
+//           failureReason: "Customer Unavailable",
+//           reasons: "Delivery attempt failed due to customer unavailability.",
+//         },
+//       ],
+//       ecom: [
+//         {
+//           orderId: "ORDER-1739602142405", // Replace with real order ID
+//           awb: "EC987654321",
+//           shipmentId: "SHIPMENT-456",
+//           courier: "ecom",
+//           status: "delivered",
+//           failureReason: null,
+//           reasons: "Delivered successfully.",
+//         },
+//       ],
+//       delhivery: [
+//         {
+//           orderId: "ORDER-1739181654857", // Replace with real order ID
+//           awb: "DL123789456",
+//           shipmentId: "SHIPMENT-789",
+//           courier: "delhivery",
+//           status: "returned",
+//           failureReason: "Returned to Sender (RTO)",
+//           reasons: "Return due to address issue.",
+//         },
+//       ],
+//     };
+
+//     // Fetch real orders from the database
+//     const realOrders = await Order.find({
+//       orderId: {
+//         $in: [
+//           "ORDER-1739605146868",
+//           "ORDER-1739602142405",
+//           "ORDER-1739181654857",
+//         ],
+//       },
+//     }).populate("userId"); // Populate the userId field to get user details
+
+//     // Map the real orders to the hardcoded orders structure
+//     const groupedOrders = {
+//       xpressbees: hardcodedOrders.xpressbees.map((order) => {
+//         const realOrder = realOrders.find((ro) => ro.orderId === order.orderId);
+//         return {
+//           ...order,
+//           ...realOrder.toObject(), // Merge hardcoded and real order details
+//         };
+//       }),
+//       ecom: hardcodedOrders.ecom.map((order) => {
+//         const realOrder = realOrders.find((ro) => ro.orderId === order.orderId);
+//         return {
+//           ...order,
+//           ...realOrder.toObject(), // Merge hardcoded and real order details
+//         };
+//       }),
+//       delhivery: hardcodedOrders.delhivery.map((order) => {
+//         const realOrder = realOrders.find((ro) => ro.orderId === order.orderId);
+//         return {
+//           ...order,
+//           ...realOrder.toObject(), // Merge hardcoded and real order details
+//         };
+//       }),
+//     };
 
 //     return res.status(200).json({
 //       success: true,
@@ -19,92 +140,6 @@ const axios = require("axios");
 //     return res.status(500).json({ error: "Failed to fetch NDR orders." });
 //   }
 // };
-
-//above one is correct - ************************************************************
-const fetchNDROrdersForAdmin = async (req, res) => {
-  try {
-    // Hardcoded orders for each courier
-    const hardcodedOrders = {
-      xpressbees: [
-        {
-          orderId: "ORDER-1739605146868", // Replace with real order ID
-          awb: "XB123456789",
-          shipmentId: "SHIPMENT-123",
-          courier: "xpressbees",
-          status: "pending",
-          failureReason: "Customer Unavailable",
-          reasons: "Delivery attempt failed due to customer unavailability.",
-        },
-      ],
-      ecom: [
-        {
-          orderId: "ORDER-1739602142405", // Replace with real order ID
-          awb: "EC987654321",
-          shipmentId: "SHIPMENT-456",
-          courier: "ecom",
-          status: "delivered",
-          failureReason: null,
-          reasons: "Delivered successfully.",
-        },
-      ],
-      delhivery: [
-        {
-          orderId: "ORDER-1739181654857", // Replace with real order ID
-          awb: "DL123789456",
-          shipmentId: "SHIPMENT-789",
-          courier: "delhivery",
-          status: "returned",
-          failureReason: "Returned to Sender (RTO)",
-          reasons: "Return due to address issue.",
-        },
-      ],
-    };
-
-    // Fetch real orders from the database
-    const realOrders = await Order.find({
-      orderId: {
-        $in: [
-          "ORDER-1739605146868",
-          "ORDER-1739602142405",
-          "ORDER-1739181654857",
-        ],
-      },
-    }).populate("userId"); // Populate the userId field to get user details
-
-    // Map the real orders to the hardcoded orders structure
-    const groupedOrders = {
-      xpressbees: hardcodedOrders.xpressbees.map((order) => {
-        const realOrder = realOrders.find((ro) => ro.orderId === order.orderId);
-        return {
-          ...order,
-          ...realOrder.toObject(), // Merge hardcoded and real order details
-        };
-      }),
-      ecom: hardcodedOrders.ecom.map((order) => {
-        const realOrder = realOrders.find((ro) => ro.orderId === order.orderId);
-        return {
-          ...order,
-          ...realOrder.toObject(), // Merge hardcoded and real order details
-        };
-      }),
-      delhivery: hardcodedOrders.delhivery.map((order) => {
-        const realOrder = realOrders.find((ro) => ro.orderId === order.orderId);
-        return {
-          ...order,
-          ...realOrder.toObject(), // Merge hardcoded and real order details
-        };
-      }),
-    };
-
-    return res.status(200).json({
-      success: true,
-      groupedOrders,
-    });
-  } catch (error) {
-    console.error("Error fetching NDR orders for admin:", error);
-    return res.status(500).json({ error: "Failed to fetch NDR orders." });
-  }
-};
 
 /**
  * Fetch NDR orders for a specific user and categorize them by courier.
@@ -239,11 +274,11 @@ const handleEcomExpress = async (awb, action, action_data) => {
         comments: action_data.comments || "NDR resolution request",
         ...(instruction === "RAD"
           ? {
-              scheduled_delivery_date:
-                action_data.scheduled_delivery_date || "",
-              scheduled_delivery_slot:
-                action_data.scheduled_delivery_slot || "",
-            }
+            scheduled_delivery_date:
+              action_data.scheduled_delivery_date || "",
+            scheduled_delivery_slot:
+              action_data.scheduled_delivery_slot || "",
+          }
           : {}),
         ...(action_data.mobile && { mobile: action_data.mobile }),
         ...parseAddressFields(action_data),

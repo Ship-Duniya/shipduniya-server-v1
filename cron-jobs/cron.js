@@ -41,13 +41,11 @@ cron.schedule("0 * * * *", async () => {
 
       if (courier === "xpressbees") {
         const token = await getXpressbeesToken();
-
         response = await axios
           .get(`https://shipment.xpressbees.com/api/shipments2/track/${awb}`, {
             headers: { Authorization: `Bearer ${token}` },
           })
           .catch((error) => error.response);
-
         trackingDetails = response?.data?.data || null;
       } else if (courier === "ecom") {
         response = await axios
@@ -59,7 +57,6 @@ cron.schedule("0 * * * *", async () => {
             },
           })
           .catch((error) => error.response);
-
         trackingDetails = response?.data || null;
       } else if (courier === "delhivery") {
         response = await axios
@@ -70,22 +67,21 @@ cron.schedule("0 * * * *", async () => {
             },
           })
           .catch((error) => error.response);
-
         trackingDetails = response?.data || null;
       }
 
-      // Based on tracking details, update the status and failureReason
+      // Process tracking details and update NDR order
       if (trackingDetails) {
-        let status = "undelivered"; // Default to undelivered if no other status is found
+        let status = "actionRequired";
         let failureReason = null;
 
         if (trackingDetails.status === "delivered") {
           status = "delivered";
         } else if (trackingDetails.status === "failed") {
-          status = "failed";
+          status = "actionRequested";
           failureReason = trackingDetails.failure_reason || "Delivery Failed";
         } else if (trackingDetails.status === "returned") {
-          status = "returned";
+          status = "rto";
           failureReason = "Returned to Sender (RTO)";
         }
 
