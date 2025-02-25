@@ -35,7 +35,7 @@ const NDRSchema = new mongoose.Schema(
       ],
       default: null,
     },
-    reasons: { type: String, default: null }, // Added reasons field
+    reasons: { type: String, default: null },
   },
   {
     timestamps: true,
