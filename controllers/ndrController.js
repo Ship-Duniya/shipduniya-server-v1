@@ -161,17 +161,17 @@ const fetchNDROrdersForUser = async (req, res) => {
       .limit(Number(limit));
 
     // Filter out orders where shippingId is null (not matching user)
-    const filteredOrders = ndrOrders.filter((order) => order.shippingId);
+    const data = ndrOrders.filter((order) => order.shippingId);
 
     // Group orders by courier (if applicable)
-    const groupedOrders = groupOrdersByCourier(filteredOrders);
+    // const groupedOrders = groupOrdersByCourier(filteredOrders);
 
     return res.status(200).json({
       success: true,
-      groupedOrders,
-      totalOrders: filteredOrders.length,
+      data,
+      totalOrders: data.length,
       currentPage: Number(page),
-      totalPages: Math.ceil(filteredOrders.length / limit),
+      totalPages: Math.ceil(data.length / limit),
     });
   } catch (error) {
     console.error("Error fetching NDR orders for user:", error);
@@ -179,36 +179,26 @@ const fetchNDROrdersForUser = async (req, res) => {
   }
 };
 
-/**
- * Handle NDR action based on the carrier.
- */
 const handleNDRAction = async (req, res) => {
   const { awb, action, action_data, carrier, reasons } = req.body;
 
   if (!awb || !action || !carrier) {
-    return res
-      .status(400)
-      .json({ message: "AWB, action, and carrier are mandatory." });
+    return res.status(400).json({ message: "AWB, action, and carrier are mandatory." });
   }
 
   try {
+    const normalizedCarrier = carrier.toLowerCase().trim();
     const handlers = {
       xpressbees: handleXpressBees,
       ecomexpress: handleEcomExpress,
       delhivery: handleDelhivery,
     };
 
-    if (!handlers[carrier.toLowerCase()]) {
-      return res
-        .status(400)
-        .json({ message: `Unsupported carrier: ${carrier}` });
+    if (!handlers[normalizedCarrier]) {
+      return res.status(400).json({ message: `Unsupported carrier: ${carrier}` });
     }
 
-    const response = await handlers[carrier.toLowerCase()](
-      awb,
-      action,
-      action_data
-    );
+    const response = await handlers[normalizedCarrier](awb, action, action_data);
 
     // Update reasons in the database
     const updatedOrder = await NDROrder.findOneAndUpdate(
@@ -217,13 +207,13 @@ const handleNDRAction = async (req, res) => {
       { new: true }
     );
 
-    return res.json({
+    return res.status(200).json({
       message: "NDR action processed successfully",
       awb,
       carrier,
       status: "success",
       data: response.data,
-      reasons: updatedOrder.reasons, // Include reasons in response
+      reasons: updatedOrder?.reasons || null, // Ensure null safety
     });
   } catch (error) {
     console.error("Error processing NDR action:", error);
@@ -247,13 +237,7 @@ const handleXpressBees = async (awb, action, action_data) => {
     throw new Error(`Invalid action for XpressBees: ${action}`);
   }
 
-  const payload = [
-    {
-      awb,
-      action,
-      action_data: validateXpressBeesActionData(action, action_data),
-    },
-  ];
+  const payload = [{ awb, action, action_data: validateXpressBeesActionData(action, action_data) }];
 
   const response = await axios.post(
     "https://shipment.xpressbees.com/api/ndr/create",
@@ -293,10 +277,8 @@ const handleEcomExpress = async (awb, action, action_data) => {
         comments: action_data.comments || "NDR resolution request",
         ...(instruction === "RAD"
           ? {
-            scheduled_delivery_date:
-              action_data.scheduled_delivery_date || "",
-            scheduled_delivery_slot:
-              action_data.scheduled_delivery_slot || "",
+            scheduled_delivery_date: action_data.scheduled_delivery_date || "",
+            scheduled_delivery_slot: action_data.scheduled_delivery_slot || "",
           }
           : {}),
         ...(action_data.mobile && { mobile: action_data.mobile }),
@@ -329,7 +311,12 @@ const handleDelhivery = async (awb, action, action_data) => {
   const response = await axios.post(
     "https://track.delhivery.com/api/p/update",
     payload,
-    { headers: { "Content-Type": "application/json" } }
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.DELHIVERY_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    }
   );
 
   return parseDelhiveryResponse(response, awb);
@@ -339,15 +326,15 @@ const handleDelhivery = async (awb, action, action_data) => {
  * Group orders by courier.
  */
 const groupOrdersByCourier = (orders) => {
-  return orders.reduce(
-    (acc, order) => {
-      acc[order.courier]
-        ? acc[order.courier].push(order)
-        : (acc[order.courier] = [order]);
-      return acc;
-    },
-    { xpressbees: [], ecom: [], delhivery: [] }
-  );
+  return orders.reduce((acc, order) => {
+    const courier = order.courier?.toLowerCase().trim();
+    if (!courier) return acc;
+
+    if (!acc[courier]) acc[courier] = [];
+    acc[courier].push(order);
+
+    return acc;
+  }, {});
 };
 
 /**
@@ -360,13 +347,8 @@ const validateXpressBeesActionData = (action, data) => {
       return { re_attempt_date: data.re_attempt_date };
     },
     change_address: () => {
-      if (!data.name || !data.address_1)
-        throw new Error("Missing address fields");
-      return {
-        name: data.name,
-        address_1: data.address_1,
-        address_2: data.address_2 || "",
-      };
+      if (!data.name || !data.address_1) throw new Error("Missing address fields");
+      return { name: data.name, address_1: data.address_1, address_2: data.address_2 || "" };
     },
     change_phone: () => {
       if (!data.phone) throw new Error("Missing phone number");
@@ -394,21 +376,18 @@ const parseAddressFields = (data) => ({
  */
 const parseXpressBeesResponse = (response, awb) => {
   const result = response.data.find((item) => item.awb === awb);
-  if (!result || !result.status)
-    throw new Error(result?.message || "Failed to process NDR with XpressBees");
+  if (!result || !result.status) throw new Error(result?.message || "Failed to process NDR with XpressBees");
   return { message: result.message, data: result };
 };
 
 const parseEcomResponse = (response, awb) => {
   const result = response.data.find((item) => item.awb === awb);
-  if (!result || !result.status)
-    throw new Error("Failed to process NDR with EcomExpress");
+  if (!result || !result.status) throw new Error("Failed to process NDR with EcomExpress");
   return { message: "NDR action processed successfully", data: result };
 };
 
 const parseDelhiveryResponse = (response, awb) => {
-  if (!response.data || !response.data.request_id)
-    throw new Error("Failed to process NDR with Delhivery");
+  if (!response.data || !response.data.request_id) throw new Error("Failed to process NDR with Delhivery");
   return {
     message: "NDR action submitted",
     data: {
