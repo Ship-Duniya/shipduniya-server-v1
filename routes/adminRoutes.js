@@ -92,8 +92,8 @@ router.get(
 
 router.get(
   "/rtcorders",
-  authMiddleware,
-  roleMiddleware(["admin", "superadmin"]),
+  // authMiddleware,
+  // roleMiddleware(["admin", "superadmin"]),
   getRTCOrderForAdmin
 );
 

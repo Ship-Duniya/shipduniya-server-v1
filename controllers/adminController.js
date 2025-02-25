@@ -575,12 +575,6 @@ const getAllShipmentsForAdmin = async (req, res) => {
 
 const getRTCOrderForAdmin = async (req, res) => {
   try {
-    if (!["admin", "superadmin"].includes(req.user.role)) {
-      return res.status(403).json({
-        message: "Access denied. You do not have permission to view orders.",
-      });
-    }
-
     // Fetch only users with userType "wp" who have delivered orders
     const deliveredOrders = await Order.aggregate([
       {
@@ -589,6 +583,16 @@ const getRTCOrderForAdmin = async (req, res) => {
           localField: "userId",
           foreignField: "_id",
           as: "user",
+          pipeline: [
+            {
+              $project: {
+                name: 1,
+                email: 1,
+                userType: 1,
+                phoneNumber: 1, // Fetch phone number
+              },
+            },
+          ],
         },
       },
       { $unwind: "$user" }, // Convert array to object
@@ -603,7 +607,35 @@ const getRTCOrderForAdmin = async (req, res) => {
           _id: "$userId",
           userName: { $first: "$user.name" },
           userEmail: { $first: "$user.email" },
-          deliveredOrders: { $push: "$$ROOT" },
+          phoneNumber: { $first: "$user.phoneNumber" }, // Include phone number
+          deliveredOrders: {
+            $push: {
+              _id: "$_id",
+              orderId: "$orderId",
+              orderType: "$orderType",
+              consignee: "$consignee",
+              consigneeAddress1: "$consigneeAddress1",
+              city: "$city",
+              state: "$state",
+              pincode: "$pincode",
+              mobile: "$mobile",
+              collectableValue: "$collectableValue",
+              declaredValue: "$declaredValue",
+              itemDescription: "$itemDescription",
+              quantity: "$quantity",
+              height: "$height",
+              breadth: "$breadth",
+              length: "$length",
+              volumetricWeight: "$volumetricWeight",
+              actualWeight: "$actualWeight",
+              invoiceNumber: "$invoiceNumber",
+              shipped: "$shipped",
+              status: "$status",
+              partner: "$partner",
+              createdAt: "$createdAt",
+              updatedAt: "$updatedAt",
+            },
+          },
         },
       },
       {
@@ -612,6 +644,7 @@ const getRTCOrderForAdmin = async (req, res) => {
           userId: "$_id",
           userName: 1,
           userEmail: 1,
+          phoneNumber: 1, // Keep phone number in response
           deliveredOrders: 1,
         },
       },
