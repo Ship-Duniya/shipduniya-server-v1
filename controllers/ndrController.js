@@ -161,17 +161,22 @@ const fetchNDROrdersForUser = async (req, res) => {
       .limit(Number(limit));
 
     // Filter out orders where shippingId is null (not matching user)
-    const data = ndrOrders.filter((order) => order.shippingId);
+    const filteredOrders = ndrOrders.filter((order) => order.shippingId);
 
-    // Group orders by courier (if applicable)
-    // const groupedOrders = groupOrdersByCourier(filteredOrders);
+    // Fetch full order details for each NDR order
+    const enrichedOrders = await Promise.all(
+      filteredOrders.map(async (order) => {
+        const fullOrderDetails = await Order.findOne({ orderId: order.shippingId.orderId });
+        return { ...order.toObject(), fullOrderDetails };
+      })
+    );
 
     return res.status(200).json({
       success: true,
-      data,
-      totalOrders: data.length,
+      data: enrichedOrders,
+      totalOrders: enrichedOrders.length,
       currentPage: Number(page),
-      totalPages: Math.ceil(data.length / limit),
+      totalPages: Math.ceil(enrichedOrders.length / limit),
     });
   } catch (error) {
     console.error("Error fetching NDR orders for user:", error);
