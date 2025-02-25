@@ -35,9 +35,10 @@ router.post(
 );
 
 // Define the route to handle NDR actions
-router.post('/ndr-actions', 
-    authMiddleware,
-    // roleMiddleware(["admin", "superadmin", "support"]), 
-    handleNDRAction);
+router.post('/ndr-actions',
+  authMiddleware,
+  // roleMiddleware(["admin", "superadmin", "support"]), 
+  handleNDRAction
+);
 
 module.exports = router;

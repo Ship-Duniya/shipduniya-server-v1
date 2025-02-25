@@ -185,52 +185,70 @@ const fetchNDROrdersForUser = async (req, res) => {
 };
 
 const handleNDRAction = async (req, res) => {
-  const { awb, action, action_data, carrier, reasons } = req.body;
+  const { ndrId, action, reasons } = req.body;
 
-  if (!awb || !action || !carrier) {
-    return res.status(400).json({ message: "AWB, action, and carrier are mandatory." });
+  if (!ndrId || !action) {
+    return res.status(400).json({ message: "NDR ID and action are mandatory." });
   }
 
   try {
-    const normalizedCarrier = carrier.toLowerCase().trim();
+    // Fetch the NDR order from the database
+    const ndrOrder = await NDROrder.findById(ndrId);
+    if (!ndrOrder) {
+      return res.status(404).json({ message: "NDR order not found." });
+    }
+
+    const { awb, courier } = ndrOrder;
+
+    // Normalize the carrier name (handling variations like "Surface Xpressbees 0.5 K.G")
+    const normalizedCarrier = courier.toLowerCase().includes("xpressbees")
+      ? "xpressbees"
+      : courier.toLowerCase().includes("ecom")
+      ? "ecomexpress"
+      : courier.toLowerCase().includes("delhivery")
+      ? "delhivery"
+      : null;
+
+    if (!normalizedCarrier) {
+      return res.status(400).json({ message: `Unsupported carrier: ${courier}` });
+    }
+
     const handlers = {
       xpressbees: handleXpressBees,
       ecomexpress: handleEcomExpress,
       delhivery: handleDelhivery,
     };
 
-    if (!handlers[normalizedCarrier]) {
-      return res.status(400).json({ message: `Unsupported carrier: ${carrier}` });
-    }
+    // Call the respective carrier handler
+    const response = await handlers[normalizedCarrier](awb, action, {});
 
-    const response = await handlers[normalizedCarrier](awb, action, action_data);
-
-    // Update reasons in the database
-    const updatedOrder = await NDROrder.findOneAndUpdate(
-      { awb },
+    // Update the NDR order with the new reasons
+    const updatedOrder = await NDROrder.findByIdAndUpdate(
+      ndrId,
       { reasons },
       { new: true }
     );
 
     return res.status(200).json({
       message: "NDR action processed successfully",
+      ndrId,
       awb,
-      carrier,
+      carrier: normalizedCarrier,
       status: "success",
       data: response.data,
-      reasons: updatedOrder?.reasons || null, // Ensure null safety
+      reasons: updatedOrder?.reasons || null,
     });
   } catch (error) {
     console.error("Error processing NDR action:", error);
     return res.status(500).json({
       message: "Failed to process NDR action",
-      awb,
-      carrier,
+      ndrId,
       status: "error",
       error: error.message,
     });
   }
 };
+
 
 /**
  * Handle XpressBees NDR actions.
