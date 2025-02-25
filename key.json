@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "ship-duniya",
+  "private_key_id": "2487d3eebf6c6ea385d08d218a99e1c782551f57",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCDmf6XLYugp1Cj\nYiMj95KBOybucYKyXSOLkBS/j0D1L3dldrxW+lXGpDuLrrqvvdkWRzh3ozrbGYjX\n8Ha+CXVx9nVHjT5UNzsvGHEYEce6mY2UkYN7qhxMdGMN98AYuYXEv45M/J3b+YXp\nfU9vbEYIXK/HQGoEsAEZfro4o/EcafMbCySsZ3HbAua2jsW9N83dQoh0z2HJExUy\nSHC+Av/iEhiVtjVxD7xiG29EfD4YRcrepwuuJRNFaUa4bksQhpFImoz9A1WEMf6Y\naajAkjh09TuqvIIR889yX/iNdZ6V/OQp95wiw4JzeMKQoQxX6oPkJjxlU7LJjtfc\nh21mrhw5AgMBAAECggEACCWWRZNtJM4kIg/Udz4fh0QF7ODBM5ur9GXAPxFAzHI6\njOEHl5vU3QtJi2QO9wuvPso8aZLvimTqMYdXlnvylbzpNZDTG7a1QX0Hcp3BKfZR\nCzI3O/EujMtvXraTDATKI5ashMFmYASHq3TANY3enQG946gYwr8G5mY6ZCtpT6Cn\nEWwO0eTd/D+hJ8xF82bHF9KfhTLutN/GP6FpHzXPE9GLO4UciaBJBy10g1jX8P3+\njgZrzglProuAIkgSa3N04d3J4KeZilhntEeiwXFqbQr8AHGDn4u6jT700f+YBADM\nxzF86ZfbGnSsZdYCCPr5gmbbsPZDf/DDtpctobEKrQKBgQC3pCAHvrA5obuxQsYx\niZGKONm/SNaQL+vqCxhwqMs8JhL9omOX7V9uUNxX/+Pvi/Erop9fc838YfBiNS2O\nf2/dYqos8MuyeU4XWtmdhVNnchafb8SUUiFn+Hm7T3GBI/ufqjMJfXOMyJcU8INf\nfyb+6EbnyR0c2+Kj6ds6Xeb6TQKBgQC3dKONq17bOpHYhuxFtJg9ntJnPfVSm14x\nsfRO2uGlq3+0QdrKepZVxJIyWvpgd+E92CvW6tqQhEZtksc0aY3bC/4zGnlXvJpb\nkDObKWX/voh/Zf7/NVPqQbwrMCkfO3eREh70yrwFXBA1JD87Mdlg+54p81SIt5si\npDskfiiHnQKBgQCkxwLqkCLmA4Y7vtPBnVPXN73CUqQcCrPfdIdAh2SdGvjNVsmQ\niDCp9qpP1875oZML+UaRyoJY5LRiGp8/DoAcoKxb2NCd2xTEBgPfwMMevhMoioxU\nHgHVnfH0rYsGOnhMQta6vDNTbqWJ52mp5Zji/x6oWh/iRjbtpyfMDnfzvQKBgQCa\nLZZ+q3VuvUxxMwNCmcIQl3eweKvCHv0MusfdtapJ91W+AlKENH4/2pIba8ZcaKON\nvC0r0/iX1/Lwh5iO/d7QJsYd4LP1/nWjWg9k6WflhRVmLCwgA4tgppojmbgVnX6h\nFx+ZDwDxaCve3XWepAhSr2R/URbMR7JDbM6fnr8lKQKBgATpMm56NTWBTNm2ETwz\nDovF6EpNPZtJtZMzBLEKB9nXDCCJxENck4DsJAMAGUUgCw4P1cyIYsE4M+wFhoC/\nK/S7mu0x2RrTq8DP8zj4t9FBnPFv+lf1wNFhWRHmY8rk407mYIMdzMDH1Do4BcJy\nlcGW7msxULR6IXjR4hKorkkd\n-----END PRIVATE KEY-----\n",
+  "client_email": "github-actions@ship-duniya.iam.gserviceaccount.com",
+  "client_id": "107367068102251355672",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/github-actions%40ship-duniya.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
