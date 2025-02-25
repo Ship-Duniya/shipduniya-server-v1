@@ -2,6 +2,7 @@ const cron = require("node-cron");
 const User = require("../models/User");
 const { updateUserMetrics } = require("./schedule");
 const axios = require("axios");
+const { getXpressbeesToken } = require("../helpers/authHelpers");
 const NDROrder = require("../models/NDR");
 
 // Schedule the job to run every 3 hours
