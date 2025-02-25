@@ -147,12 +147,31 @@ const fetchNDROrdersForAdmin = async (req, res) => {
 const fetchNDROrdersForUser = async (req, res) => {
   try {
     const userId = req.user.id;
-    const orders = await NDROrder.find({ createdBy: userId });
-    const groupedOrders = groupOrdersByCourier(orders);
+    const { page = 1, limit = 10 } = req.query; // Pagination support
+    const skip = (page - 1) * limit;
+
+    // Fetch NDR orders for the user
+    const ndrOrders = await NDROrder.find()
+      .populate({
+        path: "shippingId",
+        match: { userId }, // Fetch only orders belonging to this user
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    // Filter out orders where shippingId is null (not matching user)
+    const filteredOrders = ndrOrders.filter((order) => order.shippingId);
+
+    // Group orders by courier (if applicable)
+    const groupedOrders = groupOrdersByCourier(filteredOrders);
 
     return res.status(200).json({
       success: true,
       groupedOrders,
+      totalOrders: filteredOrders.length,
+      currentPage: Number(page),
+      totalPages: Math.ceil(filteredOrders.length / limit),
     });
   } catch (error) {
     console.error("Error fetching NDR orders for user:", error);
