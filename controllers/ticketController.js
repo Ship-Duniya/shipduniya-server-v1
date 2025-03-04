@@ -3,121 +3,26 @@ const User = require("../models/User");
 const { generateTicketId } = require("../utils/helpers");
 const axios = require("axios");
 const sendEmail = require("../utils/sendEmail");
+const { Storage } = require("@google-cloud/storage");
+const multer = require("multer");
+const path = require("path");
 
-// Create a ticket
-// const createTicket = async (req, res) => {
-//   console.log(req.user);
-//   try {
-//     const ticket = new Ticket({
-//       userId: req.user.id,
-//       subject: req.body.subject,
-//       ticketId: generateTicketId(),
-//       message: req.body.message,
-//       issueType: req.body.issueType,
-//     });
+// Initialize Google Cloud Storage
+const storage = new Storage({
+  keyFilename: process.env.GCP_KEY_FILE_PATH,
+});
+const bucketName = process.env.GCP_BUCKET_NAME;
 
-//     await ticket.save();
-//     res.status(201).json(ticket);
-//   } catch (error) {
-//     res.status(500).json({ message: 'Server error', error });
-//   }
-// };
+// Multer Storage Configuration (Temp File Storage)
+const upload = multer({
+  storage: multer.memoryStorage(), // Store file in memory before upload
+  limits: { fileSize: 5 * 1024 * 1024 }, // Limit: 5MB per file
+});
 
-// // Get all tickets (Admin/Support)
-// const getAllTickets = async (req, res) => {
-//   try {
-//     const tickets = await Ticket.find()
-//       .populate('userId', 'name email')
-//       .sort({ updatedAt: -1 });
-//     res.json(tickets);
-//   } catch (error) {
-//     res.status(500).json({ message: 'Error fetching tickets', error });
-//   }
-// };
-
-// // Get all tickets of a user
-// const getAllTicketsOfUser = async (req, res) => {
-//   try {
-//     const tickets = await Ticket.find({ userId: req.user.id })
-//       .populate('userId', 'name email')
-//       .sort({ updatedAt: -1 });
-//     res.json(tickets);
-//   } catch (error) {
-//     res.status(500).json({ message: 'Error fetching tickets', error });
-//   }
-// };
-
-// // Get a single ticket (Admin/Support)
-// const getSingleTicket = async (req, res) => {
-//   try {
-//     const ticket = await Ticket.findById(req.params.id).populate(
-//       'userId',
-//       'name email'
-//     );
-//     if (!ticket) {
-//       return res.status(404).json({ message: 'Ticket not found' });
-//     }
-//     res.json(ticket);
-//   } catch (error) {
-//     res.status(500).json({ message: 'Error fetching ticket', error });
-//   }
-// };
-
-// // Update ticket status
-// const updateTicketStatus = async (req, res) => {
-//   const { ticketId } = req.params;
-//   const { status } = req.body;
-
-//   if (!["open", "in-progress", "resolved"].includes(status)) {
-//     return res.status(400).json({ error: "Invalid status value" });
-//   }
-
-//   try {
-//     const updateData = { status };
-//     if (status === "resolved") {
-//       updateData.resolvedAt = Date.now();
-//     }
-
-//     const ticket = await Ticket.findByIdAndUpdate(ticketId, updateData, {
-//       new: true,
-//     });
-
-//     if (!ticket) {
-//       return res.status(404).json({ error: "Ticket not found" });
-//     }
-
-//     const user = await User.findById(ticket.userId);
-//     const emailSubject = `Ticket Status Updated: ${ticket.ticketId}`;
-//     const emailMessage = `Hello ${user.name},\n\nYour ticket with ID ${ticket.ticketId} has been updated to "${status}".\n\nThank you for your patience.\n\nBest regards,\nSupport Team`;
-
-//     await sendEmail(user.email, emailSubject, emailMessage);
-
-//     res.status(200).json(ticket);
-//   } catch (error) {
-//     console.log(error);
-//     res.status(500).json({ error: "Internal server error" });
-//   }
-// };
-
-// // Delete a ticket
-// const deleteTicket = async (req, res) => {
-//   try {
-//     const ticket = await Ticket.findById(req.params.id);
-//     if (!ticket) {
-//       return res.status(404).json({ message: 'Ticket not found' });
-//     }
-
-//     await ticket.remove();
-//     res.json({ message: 'Ticket deleted' });
-//   } catch (error) {
-//     res.status(500).json({ message: 'Error deleting ticket', error });
-//   }
-// };
-
-//user- raise tickets
 const raiseTicket = async (req, res) => {
   const userId = req.user.id;
   const { issueType, awbNumber, subject, description } = req.body;
+  let fileUrl = null;
 
   try {
     // Generate a unique ticket ID
@@ -130,13 +35,34 @@ const raiseTicket = async (req, res) => {
       });
     }
 
+    // Check if a file was uploaded
+    if (req.file) {
+      const fileName = `tickets/${ticketId}-${Date.now()}${path.extname(req.file.originalname)}`;
+      const file = storage.bucket(bucketName).file(fileName);
+
+      // Upload file to GCP bucket
+      await file.save(req.file.buffer, {
+        metadata: { contentType: req.file.mimetype },
+      });
+
+      // Generate Signed URL (valid for 7 days)
+      [fileUrl] = await file.getSignedUrl({
+        action: "read",
+        expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      console.log(`File uploaded: ${fileUrl}`);
+    }
+
+    // Save ticket with file URL (if available)
     const newTicket = new Ticket({
       userId,
       issueType,
       subject,
       awbNumber,
       description,
-      ticketId, // Store the generated ticket ID
+      ticketId,
+      fileUrl, // Save the file URL in the ticket record
     });
 
     await newTicket.save();
@@ -155,6 +81,9 @@ const raiseTicket = async (req, res) => {
     });
   }
 };
+
+// Middleware to handle file uploads before calling raiseTicket
+const uploadMiddleware = upload.single("attachment");
 
 //view tickets by user
 const viewTickets = async (req, res) => {
@@ -406,4 +335,5 @@ module.exports = {
   chatOnTicket,
   viewAllTickets,
   transferTicketToVendor,
+  uploadMiddleware
 };

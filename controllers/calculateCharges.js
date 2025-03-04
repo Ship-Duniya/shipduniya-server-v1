@@ -179,99 +179,53 @@ async function calculateShippingCharges(req, res) {
 
       if (isNaN(chargeableWeight) || isNaN(CODAmount)) continue;
 
-      for (const partner of partnerCharges) {
-        const { carrierName } = partner;
+      let partnerChargeDetails = null;
 
-        const ecomChargeDetails = await getEcomCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount
-        );
-
-        const xpressbeesChargeDetails = await getXpressbeesCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount
-        );
-
-        const delhiveryExpressCharges = await getDelhiveryCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount,
-          "E"
-        );
-
-        const delhiverySurfaceCharges = await getDelhiveryCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount,
-          "S"
-        );
-
-        chargesBreakdown.push(
-          ...(ecomChargeDetails
-            ? [
-              {
-                carrierName: carrierName.toUpperCase(),
-                totalPrice: ecomChargeDetails.total_charge,
-              },
-            ]
-            : []),
-          ...(xpressbeesChargeDetails
-            ? [
-              {
-                carrierName: xpressbeesChargeDetails.name,
-                totalPrice: xpressbeesChargeDetails.total_charges,
-              },
-            ]
-            : []),
-          ...(delhiveryExpressCharges
-            ? [
-              {
-                carrierName: "Delhivery Express",
-                totalPrice: delhiveryExpressCharges.total_amount,
-              },
-            ]
-            : []),
-          ...(delhiverySurfaceCharges
-            ? [
-              {
-                carrierName: "Delhivery Surface",
-                totalPrice: delhiverySurfaceCharges.total_amount,
-              },
-            ]
-            : [])
-        );
+      switch (partner.toLowerCase()) {
+        case "ecom":
+          partnerChargeDetails = await getEcomCharges(
+            originPincode,
+            destinationPincode,
+            chargeableWeight,
+            CODAmount
+          );
+          break;
+        case "xpressbees":
+          partnerChargeDetails = await getXpressbeesCharges(
+            originPincode,
+            destinationPincode,
+            chargeableWeight,
+            CODAmount
+          );
+          break;
+        case "delhivery":
+          partnerChargeDetails = await getDelhiveryCharges(
+            originPincode,
+            destinationPincode,
+            chargeableWeight,
+            CODAmount
+          );
+          break;
+        default:
+          return res
+            .status(400)
+            .json({ message: "Invalid partner specified." });
       }
-    }
 
-    // Filter out duplicate entries
-    const uniqueCharges = [];
-    const seen = new Set();
-    for (const charge of chargesBreakdown) {
-      const key = `${charge.carrierName}-${charge.totalPrice}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        uniqueCharges.push(charge);
+      if (partnerChargeDetails) {
+        chargesBreakdown.push({
+          carrierName: partner.charAt(0).toUpperCase() + partner.slice(1),
+          totalPrice:
+            partnerChargeDetails.total_charge ||
+            partnerChargeDetails.total_charges ||
+            partnerChargeDetails.total_amount,
+        });
       }
-    }
-
-    // Apply filtering based on partner keyword (if provided)
-    let filteredCharges = uniqueCharges;
-    if (partner) {
-      const lowerCasePartner = partner.toLowerCase();
-      filteredCharges = uniqueCharges.filter((charge) =>
-        charge.carrierName.toLowerCase().includes(lowerCasePartner)
-      );
     }
 
     res.json({
       message: "Shipping charges calculated successfully.",
-      charges: filteredCharges,
+      charges: chargesBreakdown,
     });
   } catch (error) {
     console.error("Error calculating shipping charges:", error);
@@ -445,7 +399,7 @@ async function getXpressbeesCharges(
     if (!bestXpressbeesOption) {
       bestXpressbeesOption = xpressbeesOptions.reduce((prev, curr) =>
         Math.abs(curr.chargeable_weight - weightInGrams) <
-          Math.abs(prev.chargeable_weight - weightInGrams)
+        Math.abs(prev.chargeable_weight - weightInGrams)
           ? curr
           : prev
       );
@@ -487,8 +441,9 @@ async function getDelhiveryCharges(
     if (isNaN(chargeableWeight) || chargeableWeight <= 0) return null;
 
     const weightInGrams = Math.round(chargeableWeight * 1000);
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${originPincode}&d_pin=${destinationPincode}&cgm=${weightInGrams}&pt=${productType === "cod" ? "COD" : "Pre-paid"
-      }&cod=${productType === "cod" ? declaredValue : 0}`;
+    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${originPincode}&d_pin=${destinationPincode}&cgm=${weightInGrams}&pt=${
+      productType === "cod" ? "COD" : "Pre-paid"
+    }&cod=${productType === "cod" ? declaredValue : 0}`;
 
     const response = await axios.get(url, {
       headers: {

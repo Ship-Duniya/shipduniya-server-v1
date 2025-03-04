@@ -1,8 +1,52 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+<<<<<<< HEAD
 # dependencies
 /node_modules
 /package-lock.json
 
 # Ignore all PDF invoices
 /invoices/*.pdf
+=======
+# Node.js dependencies
+/node_modules
+/package-lock.json
+/yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.log
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build output
+/dist
+/.next
+/out/
+coverage/
+build/
+.cache/
+
+# Ignore all PDF invoices
+/invoices/*.pdf
+>>>>>>> e66f73e8af897584523305577ee6a534d245e083

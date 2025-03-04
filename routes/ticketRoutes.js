@@ -4,6 +4,7 @@ const router = express.Router();
 const { authMiddleware, roleMiddleware } = require("../middlewares/auth");
 const {
   raiseTicket,
+  uploadMiddleware,
   viewTickets,
   viewAllTickets,
   chatOnTicket,
@@ -12,7 +13,7 @@ const {
 } = require("../controllers/ticketController");
 
 // Route for raising a ticket
-router.post("/raise", authMiddleware, raiseTicket);
+router.post("/raise", authMiddleware, uploadMiddleware, raiseTicket);
 
 // Change a ticket status
 router.put(
