@@ -385,6 +385,38 @@ const addBankDetail = async (req, res) => {
   }
 };
 
+//Edit Bank details
+const editBankDetail = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const { bankId } = req.params;
+    const bankDetailIndex = user.bankDetails.findIndex(
+      (detail) => detail._id.toString() === bankId
+    );
+
+    if (bankDetailIndex === -1) {
+      return res.status(404).json({ message: "Bank detail not found" });
+    }
+
+    user.bankDetails[bankDetailIndex] = {
+      ...user.bankDetails[bankDetailIndex],
+      ...req.body,
+    };
+    await user.save();
+
+    res.status(200).json({
+      message: "Bank detail updated successfully",
+      bankDetails: user.bankDetails,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error updating bank detail", error });
+  }
+};
+
 // Delete a account Detail of a user
 const deleteBankDetailById = async (req, res) => {
   try {
@@ -732,4 +764,5 @@ module.exports = {
   forgotPassword,
   resetPassword,
   updateActiveBank,
+  editBankDetail,
 };

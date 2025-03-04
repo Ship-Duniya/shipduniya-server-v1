@@ -10,6 +10,7 @@ const {
   deleteUserById,
   getUserBankAccounts,
   addBankDetail,
+  editBankDetail,
   deleteBankDetailById,
   getUserMetrics,
   addBankAccount,
@@ -44,6 +45,9 @@ router.get("/bank-details", authMiddleware, getUserBankAccounts);
 
 // Add Bank Account to a User
 router.post("/bank-details", authMiddleware, addBankDetail);
+
+// Edit Bank Account Details
+router.put("/bank-details/:bankId", authMiddleware, editBankDetail);
 
 // Delete a Bank's Account of a user
 router.delete(
