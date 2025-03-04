@@ -6,3 +6,5 @@
 
 # Ignore all PDF invoices
 /invoices/*.pdf
+
+.env
