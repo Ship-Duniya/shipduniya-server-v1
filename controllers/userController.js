@@ -1,4 +1,6 @@
 const bcrypt = require("bcryptjs");
+require("dotenv").config();
+const twilio = require("twilio");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Order = require("../models/Order");
@@ -9,81 +11,84 @@ const chargesSheet = require("../chargesSheet");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
+// Initialize Twilio client
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
 const sendOtp = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, phone } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required." });
+    if (!email || !phone) {
+      return res.status(400).json({ message: "Email and phone are required." });
     }
 
-    const existingUser = await User.findOne({ email });
-    if (!existingUser) {
-      return res
-        .status(404)
-        .json({ message: "User does not exist. Please sign up." });
-    }
+    // Generate separate OTPs for email & phone
+    const emailOtp = Math.floor(1000 + Math.random() * 9000);
+    const phoneOtp = Math.floor(1000 + Math.random() * 9000);
+    console.log(`Email OTP: ${emailOtp}, Phone OTP: ${phoneOtp}`);
 
-    // Generate 4-digit OTP
-    const otp = Math.floor(1000 + Math.random() * 9000);
-    console.log(otp);
-
-    // Save OTP to the database
+    // Save OTPs in the database (overwrite if exists)
     await OtpModel.findOneAndUpdate(
-      { email },
-      { email, otp, createdAt: new Date() },
+      { email, phone },
+      { email, phone, emailOtp, phoneOtp, createdAt: new Date() },
       { upsert: true, new: true }
     );
 
-    // Create nodemailer transporter
+    // Send OTP via Email
     const transporter = nodemailer.createTransport({
       service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
     });
 
-    // Email options
-    const mailOptions = {
-      from: process.env.EMAIL,
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
       to: email,
-      subject: "Your OTP Code",
-      text: `Your OTP code is ${otp}. It will expire in 10 minutes.`,
-    };
+      subject: "Your Email OTP",
+      text: `Your OTP for email verification is ${emailOtp}. It expires in 10 minutes.`,
+    });
 
-    // Send email
-    await transporter.sendMail(mailOptions);
+    // Send OTP via Twilio SMS
+    await twilioClient.messages.create({
+      body: `Your OTP for phone verification is ${phoneOtp}. It expires in 10 minutes.`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: phone, // Ensure phone number is in E.164 format (+91 for India)
+    });
 
-    res.status(200).json({ message: "OTP sent successfully to your email." });
+    res.status(200).json({ message: "OTP sent to email and phone." });
   } catch (error) {
     console.error("Error sending OTP:", error);
-    res
-      .status(500)
-      .json({ message: "Error sending OTP. Please try again later." });
+    res.status(500).json({ message: "Error sending OTP. Try again later." });
   }
 };
 
 const verifyOtp = async (req, res) => {
-  const { email, otp } = req.body;
-
-  if (!email || !otp) {
-    return res.status(400).json({ error: "Email and OTP are required." });
-  }
-
   try {
-    const otpInDatabase = await OtpModel.findOne({ email });
+    const { email, phone, emailOtp, phoneOtp } = req.body;
 
-    if (!otpInDatabase || otpInDatabase.otp !== parseInt(otp, 10)) {
-      return res.status(400).json({ message: "Invalid OTP" });
+    if (!email || !phone || !emailOtp || !phoneOtp) {
+      return res.status(400).json({ message: "Both OTPs are required." });
     }
 
-    await OtpModel.deleteOne({ email });
+    const otpRecord = await OtpModel.findOne({ email, phone });
+
+    if (!otpRecord) {
+      return res.status(400).json({ message: "OTP record not found." });
+    }
+
+    if (
+      otpRecord.emailOtp !== parseInt(emailOtp, 10) ||
+      otpRecord.phoneOtp !== parseInt(phoneOtp, 10)
+    ) {
+      return res.status(400).json({ message: "Invalid OTPs. Try again." });
+    }
+
+    // Mark OTP as verified
+    await OtpModel.updateOne({ email, phone }, { verified: true });
 
     res.status(200).json({ message: "OTP verified successfully." });
   } catch (error) {
     console.error("Error verifying OTP:", error);
-    res.status(500).json({ error: "Failed to verify OTP." });
+    res.status(500).json({ message: "Failed to verify OTP." });
   }
 };
 
@@ -113,51 +118,61 @@ const forgotPassword = async (req, res) => {
   }
 };
 
-// User registration
 const registerUser = async (req, res) => {
-  const { name, email, password, mobile, terms } = req.body;
-
   try {
-    // Check if user exists
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(400).json({ message: "User already exists" });
+    const { name, email, phone, password, terms } = req.body;
+
+    // Ensure OTP verification is completed
+    const otpVerified = await OtpModel.findOne({ email, phone, verified: true });
+
+    if (!otpVerified) {
+      return res.status(400).json({ message: "Please verify OTPs first." });
     }
 
-    if (terms === false) {
-      return res
-        .status(400)
-        .json({ message: "Please accept the terms & conditions" });
+    // Check if user already exists
+    const userExists = await User.findOne({ $or: [{ email }, { phone }] });
+    if (userExists) {
+      return res.status(400).json({ message: "User already exists." });
+    }
+
+    if (!terms) {
+      return res.status(400).json({ message: "Please accept terms & conditions." });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
+    // Create user
     const user = await User.create({
       name,
       email,
-      phone: mobile,
+      phone,
       password: hashedPassword,
-      userId: generateId("user"),
     });
+
+    // Generate JWT token
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
+    // Delete OTP record after registration
+    await OtpModel.deleteOne({ email, phone });
+
     res.status(201).json({
-      _id: user._id,
-      userId: generateId("user"),
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
+      message: "User registered successfully",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
       token,
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error", error });
+    console.error("Registration error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
