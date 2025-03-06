@@ -121,7 +121,7 @@ function extractWeightFromCarrierName(carrierName) {
 
 // Function to calculate shipping charges
 async function calculateShippingCharges(req, res) {
-  const { orderIds, warehouseId, partner } = req.body; // Get partner from request
+  const { orderIds, pickUpWareHouse, returnWarehouse, carrierName } = req.body; // Updated request parameters
 
   try {
     const userId = req.user.id;
@@ -143,18 +143,20 @@ async function calculateShippingCharges(req, res) {
 
     let originPincode;
 
-    if (warehouseId === "Ship Duniya") {
+    if (pickUpWareHouse === "Ship Duniya") {
       originPincode = "201301";
     } else {
-      if (!mongoose.Types.ObjectId.isValid(warehouseId)) {
-        return res.status(400).json({ message: "Invalid warehouse ID." });
+      if (!mongoose.Types.ObjectId.isValid(pickUpWareHouse)) {
+        return res
+          .status(400)
+          .json({ message: "Invalid pickup warehouse ID." });
       }
 
-      const warehouse = await Warehouse.findById(warehouseId);
+      const warehouse = await Warehouse.findById(pickUpWareHouse);
       if (!warehouse || !warehouse.pincode) {
         return res
           .status(400)
-          .json({ message: "Invalid warehouse ID or missing pincode." });
+          .json({ message: "Invalid pickup warehouse ID or missing pincode." });
       }
       originPincode = warehouse.pincode;
     }
@@ -180,8 +182,9 @@ async function calculateShippingCharges(req, res) {
       if (isNaN(chargeableWeight) || isNaN(CODAmount)) continue;
 
       let partnerChargeDetails = null;
+      const carrier = carrierName.toLowerCase();
 
-      switch (partner.toLowerCase()) {
+      switch (carrier) {
         case "ecom":
           partnerChargeDetails = await getEcomCharges(
             originPincode,
@@ -209,12 +212,12 @@ async function calculateShippingCharges(req, res) {
         default:
           return res
             .status(400)
-            .json({ message: "Invalid partner specified." });
+            .json({ message: "Invalid carrier specified." });
       }
 
       if (partnerChargeDetails) {
         chargesBreakdown.push({
-          carrierName: partner.charAt(0).toUpperCase() + partner.slice(1),
+          carrierName: carrier.charAt(0).toUpperCase() + carrier.slice(1),
           totalPrice:
             partnerChargeDetails.total_charge ||
             partnerChargeDetails.total_charges ||
