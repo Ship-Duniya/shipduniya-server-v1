@@ -120,8 +120,9 @@ function extractWeightFromCarrierName(carrierName) {
 }
 
 // Function to calculate shipping charges
+// Function to calculate shipping charges
 async function calculateShippingCharges(req, res) {
-  const { orderIds, pickUpWareHouse, returnWarehouse, carrierName } = req.body; // Updated request parameters
+  const { orderIds, pickUpWareHouse, returnWarehouse, carrierName } = req.body;
 
   try {
     const userId = req.user.id;
@@ -141,6 +142,9 @@ async function calculateShippingCharges(req, res) {
         .json({ message: "Customer type not found in charge sheet." });
     }
 
+    // Debug: Log partner charges for the customer type
+    console.log("Partner Charges for", customerType, ":", partnerCharges);
+
     let originPincode;
 
     if (pickUpWareHouse === "Ship Duniya") {
@@ -148,16 +152,22 @@ async function calculateShippingCharges(req, res) {
     } else {
       if (!mongoose.Types.ObjectId.isValid(pickUpWareHouse)) {
         return res
+
           .status(400)
+
           .json({ message: "Invalid pickup warehouse ID." });
       }
 
       const warehouse = await Warehouse.findById(pickUpWareHouse);
+
       if (!warehouse || !warehouse.pincode) {
         return res
+
           .status(400)
+
           .json({ message: "Invalid pickup warehouse ID or missing pincode." });
       }
+
       originPincode = warehouse.pincode;
     }
 
@@ -169,60 +179,83 @@ async function calculateShippingCharges(req, res) {
 
       const {
         chargeableWeight,
+
         CODAmount,
+
         productType,
+
         pincode: destinationPincode,
       } = orderDetails;
 
       if (!originPincode || !destinationPincode) {
         console.error("❌ Error: Origin or Destination Pincode is missing!");
+
         continue;
       }
 
       if (isNaN(chargeableWeight) || isNaN(CODAmount)) continue;
 
-      let partnerChargeDetails = null;
       const carrier = carrierName.toLowerCase();
 
-      switch (carrier) {
-        case "ecom":
-          partnerChargeDetails = await getEcomCharges(
-            originPincode,
-            destinationPincode,
-            chargeableWeight,
-            CODAmount
-          );
-          break;
-        case "xpressbees":
-          partnerChargeDetails = await getXpressbeesCharges(
-            originPincode,
-            destinationPincode,
-            chargeableWeight,
-            CODAmount
-          );
-          break;
-        case "delhivery":
-          partnerChargeDetails = await getDelhiveryCharges(
-            originPincode,
-            destinationPincode,
-            chargeableWeight,
-            CODAmount
-          );
-          break;
-        default:
-          return res
-            .status(400)
-            .json({ message: "Invalid carrier specified." });
+      // Filter partner charges for the specified carrier (case-insensitive)
+      const carrierCharges = partnerCharges.filter(
+        (partner) => partner.carrierName.toLowerCase() === carrier
+      );
+
+      // Debug: Log filtered carrier charges
+      console.log("Filtered Carrier Charges for", carrier, ":", carrierCharges);
+
+      if (carrierCharges.length === 0) {
+        return res.status(400).json({ message: "Invalid carrier specified." });
       }
 
-      if (partnerChargeDetails) {
-        chargesBreakdown.push({
-          carrierName: carrier.charAt(0).toUpperCase() + carrier.slice(1),
-          totalPrice:
-            partnerChargeDetails.total_charge ||
-            partnerChargeDetails.total_charges ||
-            partnerChargeDetails.total_amount,
-        });
+      // Iterate through all service types for the carrier
+      for (const service of carrierCharges) {
+        let partnerChargeDetails = null;
+
+        switch (carrier) {
+          case "ecom":
+            partnerChargeDetails = await getEcomCharges(
+              originPincode,
+              destinationPincode,
+              chargeableWeight,
+              CODAmount
+            );
+            break;
+          case "xpressbees":
+            partnerChargeDetails = await getXpressbeesCharges(
+              originPincode,
+              destinationPincode,
+              chargeableWeight,
+              CODAmount,
+              service.serviceType // Pass service type
+            );
+            break;
+          case "delhivery":
+            partnerChargeDetails = await getDelhiveryCharges(
+              originPincode,
+              destinationPincode,
+              chargeableWeight,
+              CODAmount,
+              service.serviceType // Pass service type
+            );
+            break;
+          default:
+            return res
+              .status(400)
+              .json({ message: "Invalid carrier specified." });
+        }
+
+        if (partnerChargeDetails) {
+          chargesBreakdown.push({
+            carrierName: carrier.charAt(0).toUpperCase() + carrier.slice(1),
+            serviceType: service.serviceType,
+            totalPrice:
+              partnerChargeDetails.total_charge ||
+              partnerChargeDetails.total_charges ||
+              partnerChargeDetails.total_amount,
+          });
+        }
       }
     }
 
@@ -342,8 +375,8 @@ async function getXpressbeesCharges(
   destinationPincode,
   chargeableWeight,
   declaredValue,
-  productType = "prepaid",
-  retry = 1
+  serviceType,
+  productType
 ) {
   try {
     if (!originPincode || !destinationPincode) {
@@ -356,7 +389,6 @@ async function getXpressbeesCharges(
       return null;
     }
 
-    productType = (productType || "prepaid").toLowerCase();
     const weightInGrams = Math.round(chargeableWeight * 1000);
     const token = await getXpressbeesToken();
 
@@ -370,6 +402,7 @@ async function getXpressbeesCharges(
       length: "10",
       breadth: "10",
       height: "10",
+      service_type: serviceType, // Pass service type to API
     };
 
     if (productType === "cod") {
@@ -392,9 +425,7 @@ async function getXpressbeesCharges(
 
     let xpressbeesOptions = response.data.data;
 
-    // ✅ Fix: Sort services by weight & Pick the Best Match
-    xpressbeesOptions.sort((a, b) => a.chargeable_weight - b.chargeable_weight);
-
+    // Find the best matching service based on weight
     let bestXpressbeesOption = xpressbeesOptions.find(
       (service) => service.chargeable_weight >= weightInGrams
     );
@@ -413,18 +444,7 @@ async function getXpressbeesCharges(
       return null;
     }
 
-    // ✅ **Estimate missing charges like Fuel & GST**
-    const fuelCharge = bestXpressbeesOption.freight_charges * 0.12; // Assume 12% fuel charge
-    const gst = (bestXpressbeesOption.freight_charges + fuelCharge) * 0.18; // Assume 18% GST
-    const totalWithGST =
-      bestXpressbeesOption.freight_charges + fuelCharge + gst;
-
-    return {
-      ...bestXpressbeesOption,
-      estimated_fuel: fuelCharge,
-      estimated_gst: gst,
-      total_with_estimated_gst: totalWithGST,
-    };
+    return bestXpressbeesOption;
   } catch (error) {
     console.error("❌ Error fetching Xpressbees charges:", error.message);
     return null;
