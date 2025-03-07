@@ -75,7 +75,7 @@ const createForwardShipping = async (req, res) => {
               password: process.env.XPRESSBEES_PASSWORD,
             }
           );
-          apiToken = loginResponse.data.token;
+          apiToken = loginResponse.data.data;
           console.log(
             "✅ XpressBees Auth Token:",
             apiToken?.slice(0, 6) + "..."
@@ -101,6 +101,7 @@ const createForwardShipping = async (req, res) => {
 
       case "delhivery":
         apiToken = process.env.DELHIVERY_API_TOKEN;
+        console.log(apiToken)
         if (!apiToken) {
           return res
             .status(500)
