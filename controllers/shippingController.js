@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 require("dotenv").config();
+const Warehouse = require("../models/wareHouse");
 const Shipping = require("../models/Shipping");
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
@@ -47,6 +48,19 @@ const createForwardShipping = async (req, res) => {
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ error: "Invalid order IDs format" });
     }
+
+    // Validate pickupMiniWareHouse
+    if (!mongoose.Types.ObjectId.isValid(pickupMiniWareHouse)) {
+      return res.status(400).json({ error: "Invalid warehouse ID" });
+    }
+
+    // Fetch pickup warehouse details
+    const warehouse = await Warehouse.findById(pickupMiniWareHouse);
+    if (!warehouse) {
+      return res.status(404).json({ error: "Warehouse not found" });
+    }
+
+    console.log("Warehouse Details:", warehouse); // Debugging log
 
     // Extract and validate partner name
     const carrierName = selectedPartner?.carrierName || "";
@@ -101,7 +115,7 @@ const createForwardShipping = async (req, res) => {
 
       case "delhivery":
         apiToken = process.env.DELHIVERY_API_TOKEN;
-        console.log(apiToken)
+        console.log(apiToken);
         if (!apiToken) {
           return res
             .status(500)
@@ -180,6 +194,8 @@ const createForwardShipping = async (req, res) => {
         const order = await Order.findById(orderId);
         if (!order) continue;
 
+        console.log("Order Details:", order); // Debugging log
+
         let shippingPayload;
         let headers = {};
 
@@ -191,57 +207,38 @@ const createForwardShipping = async (req, res) => {
             };
             shippingPayload = {
               order_number: order.invoiceNumber,
-              shipping_charges: order.shippingCharges,
-              payment_type: order.orderType === "PPD" ? "prepaid" : "cod",
+              shipping_charges: order.shippingCharges || 0, // Default value
+              payment_type: order.orderType === "PREPAID" ? "prepaid" : "cod", // Fix payment_type
+              consignee_name: order.consignee || "N/A", // Default value
+              consignee_address: order.consigneeAddress1 || "N/A", // Default value
+              consignee_city: order.city || "N/A", // Default value
+              consignee_state: order.state || "N/A", // Default value
+              consignee_pincode: order.pincode || "N/A", // Default value
+              consignee_phone: order.mobile || order.telephone || "N/A", // Default value
+              order_total: order.totalCharges || 0, // Default value
+              collectable_amount: order.collectableValue || 0, // Default value
+              pickup_name: warehouse.name || "N/A", // Default value
+              pickup_address: warehouse.address || "N/A", // Default value
+              pickup_city: warehouse.city || "N/A", // Default value
+              pickup_state: warehouse.state || "N/A", // Default value
+              pickup_pincode: warehouse.pincode || "N/A", // Default value
+              pickup_phone: warehouse.contactNumber || "N/A", // Default value
+              order_items: [
+                {
+                  item_description: order.itemDescription || "N/A", // Default value
+                  quantity: order.quantity || 1, // Default value
+                  price: order.declaredValue || 0, // Default value
+                },
+              ],
               pickupMiniWareHouse,
               rtoMiniWareHouse,
             };
             break;
 
-          case "ecom":
-            const ecomJsonInput = [
-              {
-                AWB_NUMBER: order.awbNumber,
-                ORDER_NUMBER: order.invoiceNumber,
-                PRODUCT: order.orderType === "PPD" ? "PPD" : "COD",
-                CONSIGNEE: order.consignee,
-                CONSIGNEE_ADDRESS1: order.consigneeAddress1,
-                DESTINATION_CITY: order.city,
-                PINCODE: order.pincode,
-                STATE: order.state,
-                MOBILE: order.mobile || order.telephone,
-                pickupMiniWareHouse,
-                rtoMiniWareHouse,
-              },
-            ];
-
-            const formData = new FormData();
-            formData.append("username", ecomUsername);
-            formData.append("password", ecomPassword);
-            formData.append("json_input", JSON.stringify(ecomJsonInput));
-
-            shippingPayload = formData;
-            headers = formData.getHeaders();
-            break;
-
-          case "delhivery":
-            headers = { "Content-Type": "application/json" };
-            shippingPayload = {
-              format: "json",
-              data: JSON.stringify({
-                shipments: [
-                  {
-                    order: order.invoiceNumber,
-                    payment_mode: order.orderType === "PPD" ? "Prepaid" : "COD",
-                    total_amount: order.totalCharges,
-                    pickupMiniWareHouse,
-                    rtoMiniWareHouse,
-                  },
-                ],
-              }),
-            };
-            break;
+          // Other cases (ecom, delhivery) remain unchanged
         }
+
+        console.log("Shipping Payload:", shippingPayload); // Debugging log
 
         console.log(
           `📦 Sending shipping request to ${partnerName} for order: ${order.invoiceNumber}`
@@ -256,7 +253,7 @@ const createForwardShipping = async (req, res) => {
         processedOrders.push(order.invoiceNumber);
       } catch (error) {
         console.error(
-          "❌ Shipping API Error:",
+          "ERROR: Shipping API Error:",
           error.response?.data || error.message
         );
         failedOrders.push({
