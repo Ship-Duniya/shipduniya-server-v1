@@ -1,6 +1,7 @@
 const NDROrder = require("../models/NDR");
 const Order = require("../models/Order");
 const Shipping = require("../models/Shipping");
+const { getXpressbeesToken } = require("../helpers/authHelpers");
 const axios = require("axios");
 
 /**
@@ -261,13 +262,14 @@ const handleXpressBees = async (awb, action, action_data) => {
   }
 
   const payload = [{ awb, action, action_data: validateXpressBeesActionData(action, action_data) }];
+  const token = await getXpressbeesToken();
 
   const response = await axios.post(
     "https://shipment.xpressbees.com/api/ndr/create",
     payload,
     {
       headers: {
-        Authorization: `Bearer ${process.env.XPRESSBEES_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
     }
