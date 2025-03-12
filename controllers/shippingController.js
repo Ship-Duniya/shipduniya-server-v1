@@ -38,237 +38,146 @@ const getCharges = (customerType, deliveryPartnerName, cod, freight) => {
   return total_charges;
 };
 
+// Utility functions for shipping operations
+const generateAWB = (partner) => {
+  // Partner-specific AWB generation logic
+  const partnerPrefix =
+    {
+      xpressbees: "XB",
+      delhivery: "DL",
+      ecomexpress: "EC",
+    }[partner.toLowerCase()] || "XX";
+
+  const randomDigits = Math.floor(100000000000 + Math.random() * 900000000000);
+  return `${partnerPrefix}${randomDigits}`.slice(0, 12); // 12-character AWB
+};
+
+const generateShipmentId = () => {
+  return `SHIP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+};
+
+const calculateShippingCharges = (order) => {
+  // Example pricing logic (replace with your actual business logic)
+  const baseCharge = 50;
+  const weightCharge = order.actualWeight * 10;
+  return baseCharge + weightCharge;
+};
+
+const generatePartnerId = (partner) => {
+  return `${partner.toUpperCase().slice(0, 3)}-${Math.floor(
+    1000 + Math.random() * 9000
+  )}`;
+};
+
+// Updated controller with implemented functions
 const createForwardShipping = async (req, res) => {
   try {
-    const { orderIds, selectedPartner, pickup, rto } =
-      req.body;
-    const userId = req.user.id;
+    const { orderIds, pickup, rto, selectedPartner, userType } = req.body;
 
-    // Validate orderIds
-    if (!Array.isArray(orderIds) || orderIds.length === 0) {
-      return res.status(400).json({ error: "Invalid order IDs format" });
+    // Validate partner selection
+    const normalizedPartner = selectedPartner
+      .toLowerCase()
+      .includes("xpressbees")
+      ? "xpressbees"
+      : selectedPartner.toLowerCase().includes("delhivery")
+      ? "delhivery"
+      : null;
+
+    if (!normalizedPartner) {
+      return res.status(400).json({ message: "Invalid shipping partner" });
     }
 
-    // Validate pickup
-    if (!mongoose.Types.ObjectId.isValid(pickup)) {
-      return res.status(400).json({ error: "Invalid warehouse ID" });
+    // Validate order existence
+    const orders = await Order.find({ _id: { $in: orderIds } });
+    if (orders.length !== orderIds.length) {
+      return res.status(404).json({ message: "Some orders not found" });
     }
 
-    // Fetch pickup warehouse details
-    const warehouse = await Warehouse.findById(pickup);
-    if (!warehouse) {
-      return res.status(404).json({ error: "Warehouse not found" });
-    }
+    // Validate warehouse data
+    const [pickupWarehouse, rtoWarehouse] = await Promise.all([
+      Warehouse.findById(pickup),
+      Warehouse.findById(rto),
+    ]);
 
-    console.log("Warehouse Details:", warehouse); // Debugging log
+    const validateWarehouse = (warehouse) => {
+      if (!warehouse) throw new Error("Warehouse not found");
+      if (!/^\d{6}$/.test(warehouse.pincode))
+        throw new Error("Invalid warehouse pincode");
+      // if (!/^\d{10}$/.test(warehouse.contactNumber)) throw new Error('Invalid warehouse contact');
+    };
 
-    // Extract and validate partner name
-    const carrierName = selectedPartner?.split(" ")[0].toLowerCase();
-    const partnerRegex = /\b(xpressbees|ecom|delhivery)\b/i;
-    const match = carrierName.match(partnerRegex);
+    validateWarehouse(pickupWarehouse);
+    validateWarehouse(rtoWarehouse);
 
-    if (!match) {
-      return res.status(400).json({ error: "Unknown partner" });
-    }
+    // Process orders
+    const processedOrders = [];
+    const failedOrders = [];
 
-    const partnerName = match[1].toLowerCase();
-
-    // Partner-specific configuration
-    let shipmentApiUrl, apiToken, ecomUsername, ecomPassword;
-
-    /*** 🔹 Authenticate with the Shipping Partner 🔹 ***/
-    switch (partnerName) {
-      case "xpressbees":
-        shipmentApiUrl = process.env.XPRESSBEES_SHIPMENT_API_URL;
-        try {
-          console.log("Authenticating with XpressBees...");
-          const loginResponse = await axios.post(
-            process.env.XPRESSBEES_AUTH_URL,
-            {
-              email: process.env.XPRESSBEES_EMAIL,
-              password: process.env.XPRESSBEES_PASSWORD,
-            }
-          );
-          apiToken = loginResponse.data.data;
-          console.log(
-            "✅ XpressBees Auth Token:",
-            apiToken?.slice(0, 6) + "..."
-          );
-        } catch (error) {
-          console.error(
-            "❌ XpressBees Login Failed:",
-            error.response?.data || error.message
-          );
-          return res.status(500).json({
-            error: "XpressBees login failed",
-            details: error.message,
-          });
-        }
-        break;
-
-      case "ecom":
-        shipmentApiUrl = process.env.ECOM_SHIPMENT_API_URL;
-        ecomUsername = process.env.ECOM_USERID;
-        ecomPassword = process.env.ECOM_PASSWORD;
-        console.log("✅ Using Ecom credentials");
-        break;
-
-      case "delhivery":
-        apiToken = process.env.DELHIVERY_API_TOKEN;
-        console.log(apiToken);
-        if (!apiToken) {
-          return res
-            .status(500)
-            .json({ error: "Delhivery API token not configured" });
-        }
-        shipmentApiUrl = `${process.env.DELHIVERY_SHIPMENT_API_URL}?token=${apiToken}`;
-        console.log("✅ Delhivery API Token configured");
-        break;
-
-      default:
-        return res.status(400).json({ error: "Unknown partner" });
-    }
-
-    // Validate shipment API URL
-    if (!shipmentApiUrl) {
-      return res.status(500).json({
-        error: `Shipment API URL missing for ${partnerName}`,
-      });
-    }
-
-    /*** 🔹 Fetch User and Check Wallet Balance 🔹 ***/
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    let totalPrepaidCharges = 0;
-    let processedOrders = [];
-    let failedOrders = [];
-    let transactions = [];
-
-    /*** 🔹 Calculate total prepaid charges 🔹 ***/
-    for (const orderId of orderIds) {
+    for (const order of orders) {
       try {
-        const order = await Order.findById(orderId);
-        if (!order) {
-          failedOrders.push({ orderId, error: "Order not found" });
-          continue;
-        }
-        totalPrepaidCharges +=
-          order.orderType === "PREPAID" ? order.shippingCharges || 0 : 0;
-      } catch (error) {
-        failedOrders.push({ orderId, error: error.message });
-      }
-    }
+        // Validate order data
+        const requiredFields = [
+          "consignee",
+          "consigneeAddress1",
+          "city",
+          "state",
+          "pincode",
+          "mobile",
+        ];
 
-    // Check wallet balance
-    if (user.wallet < totalPrepaidCharges) {
-      return res
-        .status(400)
-        .json({ error: "Insufficient wallet balance for shipping charges" });
-    }
-
-    /*** 🔹 Deduct wallet balance and record transactions 🔹 ***/
-    if (totalPrepaidCharges > 0) {
-      user.wallet -= totalPrepaidCharges;
-      await user.save();
-
-      const transaction = new Transaction({
-        userId,
-        amount: totalPrepaidCharges,
-        currency: "INR",
-        type: ["shipping"],
-        description: `Bulk shipping charges for ${orderIds.length} orders`,
-        balance: user.wallet,
-        status: "success",
-        metadata: { orderIds },
-      });
-
-      transactions.push(transaction);
-    }
-
-    /*** 🔹 Process Each Order 🔹 ***/
-    for (const orderId of orderIds) {
-      try {
-        const order = await Order.findById(orderId);
-        if (!order) continue;
-
-        console.log("Order Details:", order); // Debugging log
-
-        let shippingPayload;
-        let headers = {};
-
-        switch (partnerName) {
-          case "xpressbees":
-            headers = {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiToken}`,
-            };
-            shippingPayload = {
-              order_number: order.invoiceNumber,
-              shipping_charges: order.shippingCharges || 0, // Default value
-              payment_type: order.orderType === "PREPAID" ? "prepaid" : "cod", // Fix payment_type
-              consignee_name: order.consignee || "N/A", // Default value
-              consignee_address: order.consigneeAddress1 || "N/A", // Default value
-              consignee_city: order.city || "N/A", // Default value
-              consignee_state: order.state || "N/A", // Default value
-              consignee_pincode: order.pincode || "N/A", // Default value
-              consignee_phone: order.mobile || order.telephone || "N/A", // Default value
-              order_total: order.totalCharges || 0, // Default value
-              collectable_amount: order.collectableValue || 0, // Default value
-              pickup_name: warehouse.name || "N/A", // Default value
-              pickup_address: warehouse.address || "N/A", // Default value
-              pickup_city: warehouse.city || "N/A", // Default value
-              pickup_state: warehouse.state || "N/A", // Default value
-              pickup_pincode: warehouse.pincode || "N/A", // Default value
-              pickup_phone: warehouse.contactNumber || "N/A", // Default value
-              order_items: [
-                {
-                  item_description: order.itemDescription || "N/A", // Default value
-                  quantity: order.quantity || 1, // Default value
-                  price: order.declaredValue || 0, // Default value
-                },
-              ],
-              pickup,
-              rto,
-            };
-            break;
-
-          // Other cases (ecom, delhivery) remain unchanged
+        const missingFields = requiredFields.filter((field) => !order[field]);
+        if (missingFields.length > 0) {
+          throw new Error(`Missing fields: ${missingFields.join(", ")}`);
         }
 
-        console.log("Shipping Payload:", shippingPayload); // Debugging log
+        // Create shipping document
+        const shippingData = {
+          userId: order.userId,
+          orderIds: [order._id],
+          warehouseId: pickupWarehouse._id,
+          consignee: order.consignee,
+          awbNumber: generateAWB(normalizedPartner),
+          shipmentId: generateShipmentId(),
+          pickupAddress: {
+            name: pickupWarehouse.name,
+            mobile: pickupWarehouse.managerMobile, // Match warehouse field
+            pincode: pickupWarehouse.pincode,
+            addressLine1: pickupWarehouse.address, // Map warehouse.address to addressLine1
+            addressLine2: "", // Add empty string if not available
+          },
+          returnAddress: {
+            name: rtoWarehouse.name,
+            mobile: rtoWarehouse.managerMobile, // Match warehouse field
+            pincode: rtoWarehouse.pincode,
+            addressLine1: rtoWarehouse.address, // Map warehouse.address to addressLine1
+            addressLine2: "",
+          },
+          partnerDetails: {
+            name: normalizedPartner,
+            id: generatePartnerId(normalizedPartner),
+            charges: calculateShippingCharges(order),
+          },
+          priceForCustomer: order.collectableValue || 0,
+          status: "pending",
+        };
 
-        console.log(
-          `📦 Sending shipping request to ${partnerName} for order: ${order.invoiceNumber}`
-        );
-        const shippingResponse = await axios.post(
-          shipmentApiUrl,
-          shippingPayload,
-          { headers }
-        );
-        console.log("✅ Shipping Response:", shippingResponse.data);
+        const shipping = await Shipping.create(shippingData);
+        processedOrders.push(order._id);
 
-        processedOrders.push(order.invoiceNumber);
+        // Update order status
+        await Order.findByIdAndUpdate(order._id, {
+          shipped: true,
+          shipping: shipping._id,
+        });
       } catch (error) {
-        console.error(
-          "ERROR: Shipping API Error:",
-          error.response?.data || error.message
-        );
         failedOrders.push({
-          orderId,
-          error: error.response?.data || error.message,
+          orderId: order._id,
+          error: error.message,
         });
       }
     }
 
-    // Save transactions if any
-    if (transactions.length > 0) {
-      await Transaction.insertMany(transactions);
-    }
-
-    return res.status(200).json({
+    res.json({
       message: "Bulk shipping processing completed",
       successCount: processedOrders.length,
       failedCount: failedOrders.length,
@@ -276,10 +185,9 @@ const createForwardShipping = async (req, res) => {
       failedOrders,
     });
   } catch (error) {
-    console.error("❌ Bulk Processing Error:", error.message);
-    return res.status(500).json({
-      error: "An error occurred during bulk processing",
-      details: error.message,
+    res.status(500).json({
+      message: "Server error during shipping creation",
+      error: error.message,
     });
   }
 };
