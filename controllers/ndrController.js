@@ -188,16 +188,17 @@ const fetchNDROrdersForUser = async (req, res) => {
 };
 
 const handleNDRAction = async (req, res) => {
-  const { ndrId, action, reasons, action_data } = req.body; // Added action_data
+  const { ndrId, action, reasons, action_data } = req.body;
 
   if (!ndrId || !action) {
-    return res
-      .status(400)
-      .json({ message: "NDR ID and action are mandatory." });
+    return res.status(400).json({ message: "NDR ID and action are mandatory." });
+  }
+
+  if (action === "Re-Attempt" && (!action_data || !action_data.re_attempt_date)) {
+    return res.status(400).json({ message: "Missing re_attempt_date for Re-Attempt action." });
   }
 
   try {
-    // Fetch the NDR order from the database
     const ndrOrder = await NDROrder.findById(ndrId);
     if (!ndrOrder) {
       return res.status(404).json({ message: "NDR order not found." });
@@ -205,7 +206,6 @@ const handleNDRAction = async (req, res) => {
 
     const { awb, courier } = ndrOrder;
 
-    // Improved carrier normalization with regex
     const normalizedCarrier = () => {
       const lowerCourier = courier.toLowerCase();
       if (/xpressbees/.test(lowerCourier)) return "xpressbees";
@@ -214,10 +214,10 @@ const handleNDRAction = async (req, res) => {
       return null;
     };
 
-    if (!normalizedCarrier) {
-      return res
-        .status(400)
-        .json({ message: `Unsupported carrier: ${courier}` });
+    const carrier = normalizedCarrier(); 
+
+    if (!carrier) {
+      return res.status(400).json({ message: `Unsupported carrier: ${courier}` });
     }
 
     const handlers = {
@@ -226,19 +226,17 @@ const handleNDRAction = async (req, res) => {
       delhivery: handleDelhivery,
     };
 
-    // Pass action_data to handler with fallback
-    const response = await handlers[normalizedCarrier](
-      awb,
-      action,
-      action_data || {} // Pass received action_data
-    );
+    if (!handlers[carrier]) {
+      return res.status(400).json({ message: `No handler found for carrier: ${carrier}` });
+    }
 
-    // Update both reasons and action_data in database
+    const response = await handlers[carrier](awb, action, action_data || {});
+
     const updatedOrder = await NDROrder.findByIdAndUpdate(
       ndrId,
       {
         reasons,
-        action_data: action_data || null, // Store action_data
+        action_data: action_data || null,
         status: "processed",
         processed_at: new Date(),
       },
@@ -249,9 +247,9 @@ const handleNDRAction = async (req, res) => {
       message: "NDR action processed successfully",
       ndrId,
       awb,
-      carrier: normalizedCarrier,
+      carrier,
       status: "success",
-      data: response.data,
+      data: response?.data,
       reasons: updatedOrder?.reasons || null,
       action_data: updatedOrder?.action_data || null,
     });
