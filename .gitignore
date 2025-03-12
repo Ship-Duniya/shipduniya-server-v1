@@ -51,3 +51,4 @@ build/
 /invoices/*.pdf
 >>>>>>> e66f73e8af897584523305577ee6a534d245e083
 services/ship-duniya-lebelling-key.json
+.env
