@@ -16,8 +16,10 @@ const {
   addBankAccount,
   deleteBankAccount,
   fetchUserCodRemittanceOrders,
-  sendOtp,
-  verifyOtp,
+  sendEmailOtp,
+  sendPhoneOtp,
+  verifyEmailOtp,
+  verifyPhoneOtp,
   resetPassword,
   updateActiveBank,
 } = require("../controllers/userController");
@@ -76,9 +78,12 @@ router.get(
   fetchUserCodRemittanceOrders
 );
 
-// OTP routes
-router.post("/send-otp", sendOtp);
-router.post("/verify-otp", verifyOtp);
+// 🔹 New OTP Routes (Replacing Old Ones)
+router.post("/send-email-otp", sendEmailOtp);
+router.post("/send-phone-otp", sendPhoneOtp);
+router.post("/verify-email-otp", verifyEmailOtp);
+router.post("/verify-phone-otp", verifyPhoneOtp);
+
 router.post("/reset-password", resetPassword);
 
 router.put("/activebank", authMiddleware, updateActiveBank);
