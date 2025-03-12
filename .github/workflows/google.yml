@@ -1,39 +1,46 @@
-name: Deploy to Cloud Run
+name: Deploy to Google Cloud Run
 
 on:
   push:
     branches:
-      - main  # Deploy only when pushing to main branch
+      - main  # Change this if your main branch has a different name
+
+env:
+  GCP_PROJECT_ID: "ship-duniya"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-      - name: Authenticate with Google Cloud
+      - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY_JSON_PROD }}
+          credentials_json: ${{ secrets.GCP_SA_KEY_JSON }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Configure Docker to use gcloud as a credential helper
-        run: gcloud auth configure-docker
+      - name: Verify Google Cloud Auth
+        run: gcloud auth list
 
-      - name: Build Docker image
-        run: docker build -t gcr.io/$GCP_PROJECT_ID/ship-duniya-image:latest -f Dockerfiles/Dockerfile .
+      - name: Check GCP_PROJECT_ID (Debugging)
+        run: echo "GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}"
 
-      - name: Push Docker image to Google Container Registry
-        run: docker push gcr.io/$GCP_PROJECT_ID/ship-duniya-image:latest
+      - name: Build Docker Image
+        run: docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/ship-duniya-image:latest -f Dockerfiles/Dockerfile .
+      
+      - name: Push Docker Image to Google Container Registry
+        run: docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/ship-duniya-image:latest
 
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy ship-duniya-service \
-            --image=gcr.io/$GCP_PROJECT_ID/ship-duniya-image:latest \
-            --region=asia-south1 \
-            --platform=managed \
-            --allow-unauthenticated
+      - name: Deploy to Google Cloud Run
+        run: gcloud run deploy ship-duniya-service \
+          --image=gcr.io/${{ secrets.GCP_PROJECT_ID }}/ship-duniya-image:latest \
+          --region=asia-south1 \
+          --platform=managed \
+          --allow-unauthenticated
