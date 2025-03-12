@@ -3,7 +3,7 @@ name: Deploy to Google Cloud Run
 on:
   push:
     branches:
-      - main  # Change if using a different branch
+      - main
 
 env:
   GCP_PROJECT_ID: "ship-duniya"
@@ -19,18 +19,15 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY_JSON }}
+          credentials_json: ${{ secrets.GCP_SA_KEY_JSON_PROD }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Verify Google Cloud Auth
+      - name: Verify Authentication
         run: gcloud auth list
-
-      - name: Check GCP_PROJECT_ID (Debugging)
-        run: echo "GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }}"
 
       - name: Build Docker Image
         run: docker build -t gcr.io/${{ env.GCP_PROJECT_ID }}/ship-duniya-image:latest -f Dockerfiles/Dockerfile .
