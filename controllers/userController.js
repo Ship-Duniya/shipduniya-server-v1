@@ -12,25 +12,29 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
 // Initialize Twilio client
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
-const sendOtp = async (req, res) => {
+const sendEmailOtp = async (req, res) => {
   try {
-    const { email, phone } = req.body;
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required." });
 
-    if (!email || !phone) {
-      return res.status(400).json({ message: "Email and phone are required." });
-    }
-
-    // Generate separate OTPs for email & phone
     const emailOtp = Math.floor(1000 + Math.random() * 9000);
-    const phoneOtp = Math.floor(1000 + Math.random() * 9000);
-    console.log(`Email OTP: ${emailOtp}, Phone OTP: ${phoneOtp}`);
+    console.log(`Email OTP: ${emailOtp}`);
 
-    // Save OTPs in the database (overwrite if exists)
+    // Save OTP in the database
     await OtpModel.findOneAndUpdate(
-      { email, phone },
-      { email, phone, emailOtp, phoneOtp, createdAt: new Date() },
+      { email, type: "email" },
+      {
+        email,
+        otp: emailOtp,
+        type: "email",
+        verified: false,
+        createdAt: new Date(),
+      },
       { upsert: true, new: true }
     );
 
@@ -47,6 +51,34 @@ const sendOtp = async (req, res) => {
       text: `Your OTP for email verification is ${emailOtp}. It expires in 10 minutes.`,
     });
 
+    res.status(200).json({ message: "Email OTP sent successfully." });
+  } catch (error) {
+    console.error("Error sending email OTP:", error);
+    res.status(500).json({ message: "Error sending OTP. Try again later." });
+  }
+};
+
+const sendPhoneOtp = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ message: "Phone is required." });
+
+    const phoneOtp = Math.floor(1000 + Math.random() * 9000);
+    console.log(`Phone OTP: ${phoneOtp}`);
+
+    // Save OTP in the database
+    await OtpModel.findOneAndUpdate(
+      { phone, type: "phone" },
+      {
+        phone,
+        otp: phoneOtp,
+        type: "phone",
+        verified: false,
+        createdAt: new Date(),
+      },
+      { upsert: true, new: true }
+    );
+
     // Send OTP via Twilio SMS
     await twilioClient.messages.create({
       body: `Your OTP for phone verification is ${phoneOtp}. It expires in 10 minutes.`,
@@ -54,40 +86,51 @@ const sendOtp = async (req, res) => {
       to: phone, // Ensure phone number is in E.164 format (+91 for India)
     });
 
-    res.status(200).json({ message: "OTP sent to email and phone." });
+    res.status(200).json({ message: "Phone OTP sent successfully." });
   } catch (error) {
-    console.error("Error sending OTP:", error);
+    console.error("Error sending phone OTP:", error);
     res.status(500).json({ message: "Error sending OTP. Try again later." });
   }
 };
 
-const verifyOtp = async (req, res) => {
+const verifyEmailOtp = async (req, res) => {
   try {
-    const { email, phone, emailOtp, phoneOtp } = req.body;
+    const { email, otp } = req.body;
+    if (!email || !otp)
+      return res.status(400).json({ message: "Email and OTP are required." });
 
-    if (!email || !phone || !emailOtp || !phoneOtp) {
-      return res.status(400).json({ message: "Both OTPs are required." });
-    }
+    const otpRecord = await OtpModel.findOne({ email, type: "email" });
+    if (!otpRecord) return res.status(400).json({ message: "OTP not found." });
 
-    const otpRecord = await OtpModel.findOne({ email, phone });
+    if (otpRecord.otp !== otp)
+      return res.status(400).json({ message: "Invalid OTP." });
 
-    if (!otpRecord) {
-      return res.status(400).json({ message: "OTP record not found." });
-    }
+    await OtpModel.updateOne({ email, type: "email" }, { verified: true });
 
-    if (
-      otpRecord.emailOtp !== parseInt(emailOtp, 10) ||
-      otpRecord.phoneOtp !== parseInt(phoneOtp, 10)
-    ) {
-      return res.status(400).json({ message: "Invalid OTPs. Try again." });
-    }
-
-    // Mark OTP as verified
-    await OtpModel.updateOne({ email, phone }, { verified: true });
-
-    res.status(200).json({ message: "OTP verified successfully." });
+    res.status(200).json({ message: "Email OTP verified successfully." });
   } catch (error) {
-    console.error("Error verifying OTP:", error);
+    console.error("Error verifying email OTP:", error);
+    res.status(500).json({ message: "Failed to verify OTP." });
+  }
+};
+
+const verifyPhoneOtp = async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp)
+      return res.status(400).json({ message: "Phone and OTP are required." });
+
+    const otpRecord = await OtpModel.findOne({ phone, type: "phone" });
+    if (!otpRecord) return res.status(400).json({ message: "OTP not found." });
+
+    if (otpRecord.otp !== otp)
+      return res.status(400).json({ message: "Invalid OTP." });
+
+    await OtpModel.updateOne({ phone, type: "phone" }, { verified: true });
+
+    res.status(200).json({ message: "Phone OTP verified successfully." });
+  } catch (error) {
+    console.error("Error verifying phone OTP:", error);
     res.status(500).json({ message: "Failed to verify OTP." });
   }
 };
@@ -122,22 +165,37 @@ const registerUser = async (req, res) => {
   try {
     const { name, email, phone, password, terms } = req.body;
 
-    // Ensure OTP verification is completed
-    const otpVerified = await OtpModel.findOne({ email, phone, verified: true });
+    // Check OTP verification for email
+    const emailVerified = await OtpModel.findOne({
+      email,
+      type: "email",
+      verified: true,
+    });
+    if (!emailVerified)
+      return res
+        .status(400)
+        .json({ message: "Please verify email OTP first." });
 
-    if (!otpVerified) {
-      return res.status(400).json({ message: "Please verify OTPs first." });
-    }
+    // Check OTP verification for phone
+    const phoneVerified = await OtpModel.findOne({
+      phone,
+      type: "phone",
+      verified: true,
+    });
+    if (!phoneVerified)
+      return res
+        .status(400)
+        .json({ message: "Please verify phone OTP first." });
 
     // Check if user already exists
     const userExists = await User.findOne({ $or: [{ email }, { phone }] });
-    if (userExists) {
+    if (userExists)
       return res.status(400).json({ message: "User already exists." });
-    }
 
-    if (!terms) {
-      return res.status(400).json({ message: "Please accept terms & conditions." });
-    }
+    if (!terms)
+      return res
+        .status(400)
+        .json({ message: "Please accept terms & conditions." });
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -157,8 +215,8 @@ const registerUser = async (req, res) => {
       { expiresIn: "24h" }
     );
 
-    // Delete OTP record after registration
-    await OtpModel.deleteOne({ email, phone });
+    // Delete OTP records after successful registration
+    await OtpModel.deleteMany({ email, phone });
 
     res.status(201).json({
       message: "User registered successfully",
@@ -774,8 +832,10 @@ module.exports = {
   addBankAccount,
   deleteBankAccount,
   fetchUserCodRemittanceOrders,
-  sendOtp,
-  verifyOtp,
+  sendEmailOtp,
+  sendPhoneOtp,
+  verifyEmailOtp,
+  verifyPhoneOtp,
   forgotPassword,
   resetPassword,
   updateActiveBank,
