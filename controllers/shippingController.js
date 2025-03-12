@@ -40,7 +40,7 @@ const getCharges = (customerType, deliveryPartnerName, cod, freight) => {
 
 const createForwardShipping = async (req, res) => {
   try {
-    const { orderIds, selectedPartner, pickupMiniWareHouse, rtoMiniWareHouse } =
+    const { orderIds, selectedPartner, pickup, rto } =
       req.body;
     const userId = req.user.id;
 
@@ -49,13 +49,13 @@ const createForwardShipping = async (req, res) => {
       return res.status(400).json({ error: "Invalid order IDs format" });
     }
 
-    // Validate pickupMiniWareHouse
-    if (!mongoose.Types.ObjectId.isValid(pickupMiniWareHouse)) {
+    // Validate pickup
+    if (!mongoose.Types.ObjectId.isValid(pickup)) {
       return res.status(400).json({ error: "Invalid warehouse ID" });
     }
 
     // Fetch pickup warehouse details
-    const warehouse = await Warehouse.findById(pickupMiniWareHouse);
+    const warehouse = await Warehouse.findById(pickup);
     if (!warehouse) {
       return res.status(404).json({ error: "Warehouse not found" });
     }
@@ -63,8 +63,8 @@ const createForwardShipping = async (req, res) => {
     console.log("Warehouse Details:", warehouse); // Debugging log
 
     // Extract and validate partner name
-    const carrierName = selectedPartner?.carrierName || "";
-    const partnerRegex = /(xpressbees|ecom|delhivery)/i;
+    const carrierName = selectedPartner?.split(" ")[0].toLowerCase();
+    const partnerRegex = /\b(xpressbees|ecom|delhivery)\b/i;
     const match = carrierName.match(partnerRegex);
 
     if (!match) {
@@ -230,8 +230,8 @@ const createForwardShipping = async (req, res) => {
                   price: order.declaredValue || 0, // Default value
                 },
               ],
-              pickupMiniWareHouse,
-              rtoMiniWareHouse,
+              pickup,
+              rto,
             };
             break;
 
