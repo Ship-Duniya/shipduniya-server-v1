@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "ship-duniya",
+  "private_key_id": "6fbf2b0cdf6a8e12a2bb7f62bdebc81d533ebb00",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCnsNLcryyBpIYj\nympw0fdduNy+6B64udfARpiyYVmHcVNkqytvSiq+2w47TyJ5PkZ1jSTJBtPWFun5\nxpKqn1RfTNwJjh8eWJwkhHi93Xyck/jVzVRoPIkWh5QlIs+yIlx7WW6nAJqzhtyQ\nkoRLxDz5LUHjkjHleZyWQB91XMy+zh+2S1e934ULbVAzHb+GeNiNkOlgX4GSBLSU\n+xb8sYiUk5lVbgA/UVBT1w3TnI/ZgmT9k7+QMbabxgrWl2HhKJu8FH2l0v1eoAPC\nOjlqhaLHMSjeN77HhJ9Try4G8To9RtbGimYmA7FbVeLIC92W42o4koKCD2Cr87uN\nkX4ibb5VAgMBAAECggEAKDCV6PRG629eAtfxeMapzZmPtmV1b3qC/f8te5sfVPnR\nLdBkYZDZ+9IOcCKANaS6SFQim9d6D9aADzALWL9E/m4yUkvwo1pDWfEx6vdZdUF1\novBKKY1QociutdPJCX14wstlXLslWJ+a3z9uW6ZVora5Euyn7sKdx9jocT1jiNsE\np7nrtqIdxUpX5AcAicKVrNa6cAhgTLkdxygAqSLPYRWgPYK/4MToXDLN9iG780p1\n8RBfoEfoYAGHxrqoS+q/l4bxqOjXVDpt7VNSwNGSC+Q2aZygHe808eHI1KCUfOKQ\nW2wtBvWoN3/k4R9UirGLj0r9av/WsTdYwlzGlFPhJQKBgQDP6VtA+fFHALiDR65Z\n/As+/oox9/hWJm05xT7vdMp/AqhUxueKKYXU0RcTT0jcm9Gw5ii3j3r08rI5Q8vU\nwwiWmgmQ4UySQt8b9IljJdyhc8oMLMI0GrEURFgoQVAeGBFXxgVQz46obuPVbnjk\nLYAHuItrclXd84BLK7uiqBFCqwKBgQDOefP19rxYnjScLmQXtADl9YEhNH7UXlm/\n0JHc5d8sUe5gIar/AAYKbiVeZRqjTPi00Py+nc5cveRgmsIMf0NhIiG5L3eqFaVC\nwL7mujMOLYEvRrx181xe7Bc8K2gUaYwvBpL+smsS2MmqoTwsknmpH75jKL0Vw64Q\noigd3CUC/wKBgQCPkK2okm6e/spqLGciT75cQ1ud4YKjymkFyUQKCXWCeo1N7QMZ\nDk8Rg0gR11+Spi4HnwZiqjrXRXb3v+7R/dLCW59bYZeEL5TsMtFjm1NcUR4lhgqb\n/Apm2kKdmWv/O9NN7rjg8lGp0NiWGnBz709HBZGQIiVU272tKoeoa7FvfQKBgQCG\nnA8mndMw2wNlhwEOSvYC9clXwoelIFXWrb1KjDqxBEEqPwjh8jv99M07+yIgsH+8\nMjt0ciElaU9Ig9xalWVyH/RobL/RDQeOu2Y5uc6rQZNlJPKc2ymvYK/NNGdIV39i\n8SBIGD2iLd9b9H3seRoD3oQa1WZgmBAVHAKXZPxkNQKBgQCYZ5N2asi3XV7+O9/O\nVop7YeryjAPPmKzpNKBd/UCv8P0/Gd2+mZWjPzJeRGFsJYB7Xg0vWX9HcaSTBHNK\nt8booVxLi5bKzw38VVzUFJ6J8ZhuutWcdR7MZyBLprGmcqDPZMgeWPCYBAOTNHVG\nyUKlqpLCMq/j39MzNQ6ehaNSIQ==\n-----END PRIVATE KEY-----\n",
+  "client_email": "label-generator-service@ship-duniya.iam.gserviceaccount.com",
+  "client_id": "107620475094072774537",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/label-generator-service%40ship-duniya.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
