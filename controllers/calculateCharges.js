@@ -22,14 +22,6 @@ async function calculateCharges(req, res) {
     destinationPincode,
   } = req.body;
 
-  console.log(
-    chargeableWeight,
-    CODAmount,
-    productType,
-    originPincode,
-    destinationPincode
-  );
-
   try {
     const userId = req.user.id;
     const userProfile = await User.findById(userId);
@@ -37,9 +29,12 @@ async function calculateCharges(req, res) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const customerType = userProfile.customerType;
+    const customerType = userProfile.customerType.toLowerCase();
+    const multiplierMap = { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 };
+    const multiplier = multiplierMap[customerType] || 1;
+
     const partnerCharges = chargeSheet.find(
-      (sheet) => sheet.customerType === customerType
+      (sheet) => sheet.customerType.toLowerCase() === customerType
     )?.deliveryPartners;
 
     if (!partnerCharges) {
@@ -50,69 +45,72 @@ async function calculateCharges(req, res) {
 
     let chargesBreakdown = [];
 
+    // Process chargeSheet partners (static rates)
     for (const partner of partnerCharges) {
       if (chargeableWeight <= partner.chargeableWeight) {
-        let freightCharge = partner.freight * chargeableWeight;
-        let codCharge =
+        const freightCharge = partner.freight * chargeableWeight;
+        const codCharge =
           productType === "COD" ? (partner.codPercentage / 100) * CODAmount : 0;
+        const total = (freightCharge + codCharge) * multiplier;
 
         chargesBreakdown.push({
           carrierName: partner.carrierName,
-          breakdown: {
-            freightCharge,
-            codCharge,
-            total: freightCharge + codCharge,
-          },
+          serviceType: partner.serviceType || "Standard",
+          totalPrice: total,
         });
       }
     }
 
-    const ecomChargeDetails = await getEcomCharges(
-      originPincode,
-      destinationPincode,
-      chargeableWeight,
-      CODAmount
-    );
-    const xpressbeesChargeDetails = await getXpressbeesCharges(
-      originPincode,
-      destinationPincode,
-      chargeableWeight,
-      CODAmount
-    );
-    const delhiveryChargeDetails = await getDelhiveryCharges(
-      originPincode,
-      destinationPincode,
-      chargeableWeight
-    );
+    // Fetch API-based partner charges
+    const [ecomCharges, xpressbeesCharges, delhiveryCharges] = await Promise.all([
+      getEcomCharges(originPincode, destinationPincode, chargeableWeight, CODAmount, productType),
+      getXpressbeesCharges(originPincode, destinationPincode, chargeableWeight, CODAmount, productType),
+      getDelhiveryCharges(originPincode, destinationPincode, chargeableWeight, CODAmount, productType)
+    ]);
 
-    if (ecomChargeDetails) {
-      chargesBreakdown.push({
-        carrierName: "Ecom Express",
-        breakdown: ecomChargeDetails,
+    // Add Ecom Express services
+    if (ecomCharges?.services) {
+      ecomCharges.services.forEach(service => {
+        chargesBreakdown.push({
+          carrierName: "Ecom Express",
+          serviceType: service.name,
+          totalPrice: (service.total_charges || 0) * multiplier,
+        });
       });
     }
-    if (xpressbeesChargeDetails) {
-      chargesBreakdown.push({
-        carrierName: "Xpressbees",
-        breakdown: xpressbeesChargeDetails,
+
+    // Add Xpressbees services
+    if (xpressbeesCharges?.services) {
+      xpressbeesCharges.services.forEach(service => {
+        chargesBreakdown.push({
+          carrierName: "Xpressbees",
+          serviceType: service.name,
+          totalPrice: (service.total_charges || 0) * multiplier,
+        });
       });
     }
-    if (delhiveryChargeDetails) {
-      chargesBreakdown.push({
-        carrierName: "Delhivery",
-        breakdown: delhiveryChargeDetails,
+
+    // Add Delhivery services
+    if (delhiveryCharges?.services) {
+      delhiveryCharges.services.forEach(service => {
+        chargesBreakdown.push({
+          carrierName: "Delhivery",
+          serviceType: service.name,
+          totalPrice: (service.total_charges || 0) * multiplier,
+        });
       });
     }
 
     res.json({
       message: "Charges calculated successfully.",
-      chargesBreakdown,
+      charges: chargesBreakdown,
     });
   } catch (error) {
     console.error("Error calculating charges:", error);
-    res
-      .status(500)
-      .json({ message: "Error calculating charges.", error: error.message });
+    res.status(500).json({
+      message: "Error calculating charges.",
+      error: error.message,
+    });
   }
 }
 
@@ -299,17 +297,17 @@ async function getXpressbeesCharges(
 
     const url = "https://shipment.xpressbees.com/api/courier/serviceability";
     const payload = {
-      origin: origin.toString(),
-      destination: destination.toString(),
+      origin: origin,
+      destination: destination,
       payment_type: productType === "COD" ? "cod" : "prepaid",
-      weight: weightInGrams.toString(),
-      length: length.toString(),
-      breadth: breadth.toString(),
-      height: height.toString(),
+      weight: weightInGrams,
+      length: length,
+      breadth: breadth,
+      height: height,
     };
 
     if (productType === "COD") {
-      payload.order_amount = codAmount.toString();
+      payload.order_amount = codAmount;
     }
 
     const response = await axios.post(url, payload, {
