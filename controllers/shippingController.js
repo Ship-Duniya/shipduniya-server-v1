@@ -72,12 +72,10 @@ const generatePartnerId = (partner) => {
 // Updated controller with implemented functions
 const createForwardShipping = async (req, res) => {
   try {
-    const { orderIds, pickup, rto, selectedPartner, userType } = req.body;
+    const { orderIds, pickup, rto, selectedPartner, userType, userId } = req.body;
 
     // Validate partner selection
-    const normalizedPartner = selectedPartner
-      .toLowerCase()
-      .includes("xpressbees")
+    const normalizedPartner = selectedPartner.toLowerCase().includes("xpressbees")
       ? "xpressbees"
       : selectedPartner.toLowerCase().includes("delhivery")
       ? "delhivery"
@@ -103,34 +101,59 @@ const createForwardShipping = async (req, res) => {
       if (!warehouse) throw new Error("Warehouse not found");
       if (!/^\d{6}$/.test(warehouse.pincode))
         throw new Error("Invalid warehouse pincode");
-      // if (!/^\d{10}$/.test(warehouse.contactNumber)) throw new Error('Invalid warehouse contact');
     };
 
     validateWarehouse(pickupWarehouse);
     validateWarehouse(rtoWarehouse);
 
-    // Process orders
+    // Fetch user and validate wallet balance
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let totalShippingCost = 0;
     const processedOrders = [];
     const failedOrders = [];
 
     for (const order of orders) {
       try {
-        // Validate order data
         const requiredFields = [
-          "consignee",
-          "consigneeAddress1",
-          "city",
-          "state",
-          "pincode",
-          "mobile",
+          "consignee", "consigneeAddress1", "city", "state", "pincode", "mobile"
         ];
-
-        const missingFields = requiredFields.filter((field) => !order[field]);
+        const missingFields = requiredFields.filter(field => !order[field]);
         if (missingFields.length > 0) {
           throw new Error(`Missing fields: ${missingFields.join(", ")}`);
         }
 
-        // Create shipping document
+        const shippingCost = calculateShippingCharges(order);
+        totalShippingCost += shippingCost;
+      } catch (error) {
+        failedOrders.push({ orderId: order._id, error: error.message });
+      }
+    }
+
+    if (user.wallet < totalShippingCost) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    // Deduct wallet amount and create transaction
+    user.wallet -= totalShippingCost;
+    await user.save();
+
+    const transaction = await Transaction.create({
+      userId: user._id,
+      type: ["wallet", "shipping"],
+      amount: totalShippingCost,
+      currency: "INR",
+      balance: user.wallet,
+      description: "Shipping charges deducted",
+      status: "success",
+    });
+
+    // Process orders
+    for (const order of orders) {
+      try {
         const shippingData = {
           userId: order.userId,
           orderIds: [order._id],
@@ -140,16 +163,16 @@ const createForwardShipping = async (req, res) => {
           shipmentId: generateShipmentId(),
           pickupAddress: {
             name: pickupWarehouse.name,
-            mobile: pickupWarehouse.managerMobile, // Match warehouse field
+            mobile: pickupWarehouse.managerMobile,
             pincode: pickupWarehouse.pincode,
-            addressLine1: pickupWarehouse.address, // Map warehouse.address to addressLine1
-            addressLine2: "", // Add empty string if not available
+            addressLine1: pickupWarehouse.address,
+            addressLine2: "",
           },
           returnAddress: {
             name: rtoWarehouse.name,
-            mobile: rtoWarehouse.managerMobile, // Match warehouse field
+            mobile: rtoWarehouse.managerMobile,
             pincode: rtoWarehouse.pincode,
-            addressLine1: rtoWarehouse.address, // Map warehouse.address to addressLine1
+            addressLine1: rtoWarehouse.address,
             addressLine2: "",
           },
           partnerDetails: {
@@ -164,16 +187,12 @@ const createForwardShipping = async (req, res) => {
         const shipping = await Shipping.create(shippingData);
         processedOrders.push(order._id);
 
-        // Update order status
         await Order.findByIdAndUpdate(order._id, {
           shipped: true,
           shipping: shipping._id,
         });
       } catch (error) {
-        failedOrders.push({
-          orderId: order._id,
-          error: error.message,
-        });
+        failedOrders.push({ orderId: order._id, error: error.message });
       }
     }
 
@@ -183,6 +202,7 @@ const createForwardShipping = async (req, res) => {
       failedCount: failedOrders.length,
       processedOrders,
       failedOrders,
+      transactionId: transaction._id,
     });
   } catch (error) {
     res.status(500).json({

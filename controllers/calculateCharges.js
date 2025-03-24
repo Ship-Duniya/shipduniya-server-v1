@@ -236,8 +236,8 @@ async function getEcomCharges(origin, destination, weight, codAmount, productTyp
       return null;
     }
 
-     // Add default value for productType
-     const product = (productType || "ppd").toLowerCase();
+    // Add default value for productType
+    const product = (productType || "ppd").toLowerCase();
 
     // Prepare payload
     const payload = {
@@ -280,12 +280,21 @@ async function getEcomCharges(origin, destination, weight, codAmount, productTyp
       return null;
     }
 
+    // Extract charges from the response
+    const freightCharge = ecomData.FRT || 0; // Freight charge
+    const codCharge = ecomData.COD || 0; // COD charge
+    const totalCharge = ecomData.total_charge || 0; // Total charge
+    const otherCharges = totalCharge - freightCharge - codCharge; // Other charges
+
     // Return the charges breakdown
     return {
       services: [
         {
           name: "Ecom Express",
-          total_charges: ecomData.chargesBreakup?.total_charge || 0,
+          total_charges: totalCharge,
+          cod_charge: codCharge,
+          freight_charge: freightCharge,
+          other_charges: otherCharges,
         },
       ],
     };
