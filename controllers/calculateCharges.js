@@ -307,43 +307,58 @@ async function getXpressbeesCharges(
 ) {
   try {
     if (!origin || !destination) {
-      console.error("❌ Error: Origin/Destination pincode missing!");
+      console.error("❌ Error: Origin or Destination Pincode is missing!");
       return null;
     }
 
+    const weightInGrams = Math.round(weight * 1000);
     const token = await getXpressbeesToken();
+
+    const url = "https://shipment.xpressbees.com/api/courier/serviceability";
     const payload = {
       origin: origin.toString(),
       destination: destination.toString(),
       payment_type: productType === "COD" ? "cod" : "prepaid",
-      weight: Math.round(weight * 1000).toString(), // Convert kg to grams
-      length: "10",
+      weight: weightInGrams.toString(),
+      length: "10", // Default dimensions
       breadth: "10",
       height: "10",
     };
 
-    if (productType === "COD") payload.order_amount = codAmount.toString();
+    if (productType === "COD") {
+      payload.order_amount = codAmount.toString();
+    }
 
-    const response = await axios.post(
-      "https://shipment.xpressbees.com/api/courier/serviceability",
-      payload,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout,
-      }
-    );
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      timeout: timeout,
+    });
 
-    // Return all services from the API response
+    if (!response.data?.data) {
+      console.error("❌ Invalid Xpressbees response format:", response.data);
+      return null;
+    }
+
     return {
       services: response.data.data.map((service) => ({
-        name: service.name.replace(/Xpressbees/gi, "").trim() || "Standard Service",
-        total_charges: service.total_charges || 0,
+        name:
+          service.name.replace(/Xpressbees/gi, "").trim() || "Standard Service",
+        total_charges: service.total_charges,
+        cod_charge: service.cod_charges || 0,
+        freight_charge: service.freight_charges || 0,
+        other_charges: service.total_charges - (service.freight_charges || 0) - (service.cod_charges || 0),
       })),
     };
   } catch (error) {
-    console.error("❌ Xpressbees API Error:", error.message);
+    console.error("❌ Error fetching Xpressbees charges:", error.message);
+
+    // Retry mechanism
     if (retries > 0) {
-      console.log(`Retrying (${retries} attempts left)...`);
+      console.log(`Retrying... Attempts left: ${retries}`);
       return getXpressbeesCharges(
         origin,
         destination,
@@ -354,6 +369,7 @@ async function getXpressbeesCharges(
         timeout
       );
     }
+
     return null;
   }
 }
@@ -388,8 +404,9 @@ async function getDelhiveryCharges(origin, destination, weight, codAmount, produ
           ? `${service.service_type} Service`
           : `Delhivery Service ${index + 1}`,
         total_charges: service.total_amount || 0,
-        cod_charge: productType === "COD" ? service.cod_charge || 0 : 0,
-        freight_charge: service.freight_charge || 0,
+        cod_charge: service.charge_COD || 0,
+        freight_charge: service.charge_DL || 0,
+        other_charges: service.total_amount - (service.charge_DL || 0) - (service.charge_COD || 0),
       })),
     };
   } catch (error) {
