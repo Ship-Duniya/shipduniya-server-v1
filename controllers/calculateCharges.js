@@ -20,7 +20,7 @@ async function calculateCharges(req, res) {
     productType,
     originPincode,
     destinationPincode,
-    carrierName, // Extract carrierName from the payload
+    carrierName,
   } = req.body;
 
   try {
@@ -61,6 +61,9 @@ async function calculateCharges(req, res) {
           carrierName: partner.carrierName,
           serviceType: partner.serviceType || "Standard",
           totalPrice: total,
+          codCharge: codCharge,
+          freightCharge: freightCharge,
+          otherCharges: 0, // No other charges in static rates
         });
       }
     }
@@ -102,10 +105,18 @@ async function calculateCharges(req, res) {
     // Add API-based partner services
     if (apiCharges?.services) {
       apiCharges.services.forEach((service) => {
+        const totalPrice = (service.total_charges || 0) * multiplier;
+        const codCharge = service.cod_charge || 0;
+        const freightCharge = service.freight_charge || 0;
+        const otherCharges = totalPrice - codCharge - freightCharge;
+
         chargesBreakdown.push({
           carrierName: carrierName,
           serviceType: service.name,
-          totalPrice: (service.total_charges || 0) * multiplier,
+          totalPrice: totalPrice,
+          codCharge: codCharge,
+          freightCharge: freightCharge,
+          otherCharges: otherCharges,
         });
       });
     }
@@ -291,60 +302,48 @@ async function getXpressbeesCharges(
   weight,
   codAmount,
   productType,
-  retries = 3, // Number of retries
-  timeout = 10000 // Increased timeout to 10 seconds
+  retries = 3,
+  timeout = 10000
 ) {
   try {
     if (!origin || !destination) {
-      console.error("❌ Error: Origin or Destination Pincode is missing!");
+      console.error("❌ Error: Origin/Destination pincode missing!");
       return null;
     }
 
-    const weightInGrams = Math.round(weight * 1000);
     const token = await getXpressbeesToken();
-
-    const url = "https://shipment.xpressbees.com/api/courier/serviceability";
     const payload = {
       origin: origin.toString(),
       destination: destination.toString(),
       payment_type: productType === "COD" ? "cod" : "prepaid",
-      weight: weightInGrams.toString(),
-      length: "10", // Default dimensions
+      weight: Math.round(weight * 1000).toString(), // Convert kg to grams
+      length: "10",
       breadth: "10",
       height: "10",
     };
 
-    if (productType === "COD") {
-      payload.order_amount = codAmount.toString();
-    }
+    if (productType === "COD") payload.order_amount = codAmount.toString();
 
-    const response = await axios.post(url, payload, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      timeout: timeout, // Increased timeout
-    });
+    const response = await axios.post(
+      "https://shipment.xpressbees.com/api/courier/serviceability",
+      payload,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout,
+      }
+    );
 
-    if (!response.data?.data) {
-      console.error("❌ Invalid Xpressbees response format:", response.data);
-      return null;
-    }
-
+    // Return all services from the API response
     return {
       services: response.data.data.map((service) => ({
-        name:
-          service.name.replace(/Xpressbees/gi, "").trim() || "Standard Service",
-        total_charges: service.total_charges,
+        name: service.name.replace(/Xpressbees/gi, "").trim() || "Standard Service",
+        total_charges: service.total_charges || 0,
       })),
     };
   } catch (error) {
-    console.error("❌ Error fetching Xpressbees charges:", error.message);
-
-    // Retry mechanism
+    console.error("❌ Xpressbees API Error:", error.message);
     if (retries > 0) {
-      console.log(`Retrying... Attempts left: ${retries}`);
+      console.log(`Retrying (${retries} attempts left)...`);
       return getXpressbeesCharges(
         origin,
         destination,
@@ -355,19 +354,12 @@ async function getXpressbeesCharges(
         timeout
       );
     }
-
     return null;
   }
 }
 
 // Updated Delhivery handler
-async function getDelhiveryCharges(
-  origin,
-  destination,
-  weight,
-  codAmount,
-  productType
-) {
+async function getDelhiveryCharges(origin, destination, weight, codAmount, productType) {
   try {
     if (!origin || !destination) return null;
     if (isNaN(weight) || weight <= 0) return null;
@@ -396,6 +388,8 @@ async function getDelhiveryCharges(
           ? `${service.service_type} Service`
           : `Delhivery Service ${index + 1}`,
         total_charges: service.total_amount || 0,
+        cod_charge: productType === "COD" ? service.cod_charge || 0 : 0,
+        freight_charge: service.freight_charge || 0,
       })),
     };
   } catch (error) {
