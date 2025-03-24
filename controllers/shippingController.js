@@ -72,10 +72,13 @@ const generatePartnerId = (partner) => {
 // Updated controller with implemented functions
 const createForwardShipping = async (req, res) => {
   try {
-    const { orderIds, pickup, rto, selectedPartner, userType, userId } = req.body;
+    const userId = req.user.id;
+    const { orderIds, pickup, rto, selectedPartner } = req.body;
 
     // Validate partner selection
-    const normalizedPartner = selectedPartner.toLowerCase().includes("xpressbees")
+    const normalizedPartner = selectedPartner
+      .toLowerCase()
+      .includes("xpressbees")
       ? "xpressbees"
       : selectedPartner.toLowerCase().includes("delhivery")
       ? "delhivery"
@@ -112,6 +115,8 @@ const createForwardShipping = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    const userType = user.customerType;
+
     let totalShippingCost = 0;
     const processedOrders = [];
     const failedOrders = [];
@@ -119,9 +124,14 @@ const createForwardShipping = async (req, res) => {
     for (const order of orders) {
       try {
         const requiredFields = [
-          "consignee", "consigneeAddress1", "city", "state", "pincode", "mobile"
+          "consignee",
+          "consigneeAddress1",
+          "city",
+          "state",
+          "pincode",
+          "mobile",
         ];
-        const missingFields = requiredFields.filter(field => !order[field]);
+        const missingFields = requiredFields.filter((field) => !order[field]);
         if (missingFields.length > 0) {
           throw new Error(`Missing fields: ${missingFields.join(", ")}`);
         }
