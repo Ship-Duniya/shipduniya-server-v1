@@ -166,7 +166,7 @@ const createForwardShipping = async (req, res) => {
             id: generatePartnerId(normalizedPartner),
             charges: shippingCost,
           },
-          priceForCustomer: order.collectableValue || 0,
+          priceForCustomer: totalShippingCost || 0,
           status: "pending",
         };
 
