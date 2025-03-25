@@ -191,11 +191,18 @@ const handleNDRAction = async (req, res) => {
   const { ndrId, action, reasons, action_data } = req.body;
 
   if (!ndrId || !action) {
-    return res.status(400).json({ message: "NDR ID and action are mandatory." });
+    return res
+      .status(400)
+      .json({ message: "NDR ID and action are mandatory." });
   }
 
-  if (action === "Re-Attempt" && (!action_data || !action_data.re_attempt_date)) {
-    return res.status(400).json({ message: "Missing re_attempt_date for Re-Attempt action." });
+  if (
+    action === "Re-Attempt" &&
+    (!action_data || !action_data.re_attempt_date)
+  ) {
+    return res
+      .status(400)
+      .json({ message: "Missing re_attempt_date for Re-Attempt action." });
   }
 
   try {
@@ -214,10 +221,12 @@ const handleNDRAction = async (req, res) => {
       return null;
     };
 
-    const carrier = normalizedCarrier(); 
+    const carrier = normalizedCarrier();
 
     if (!carrier) {
-      return res.status(400).json({ message: `Unsupported carrier: ${courier}` });
+      return res
+        .status(400)
+        .json({ message: `Unsupported carrier: ${courier}` });
     }
 
     const handlers = {
@@ -227,7 +236,9 @@ const handleNDRAction = async (req, res) => {
     };
 
     if (!handlers[carrier]) {
-      return res.status(400).json({ message: `No handler found for carrier: ${carrier}` });
+      return res
+        .status(400)
+        .json({ message: `No handler found for carrier: ${carrier}` });
     }
 
     const response = await handlers[carrier](awb, action, action_data || {});
@@ -271,129 +282,170 @@ const handleNDRAction = async (req, res) => {
 // Improved XpressBees handler with better validation
 const handleXpressBees = async (awb, action, action_data) => {
   const validActions = ["re-attempt", "change_address", "change_phone"];
+  action = action.toLowerCase();
 
+  // Validate action type
   if (!validActions.includes(action)) {
     throw new Error(
-      `Invalid action for XpressBees: ${action}. Valid actions: ${validActions.join(
+      `XpressBees: Unsupported action '${action}'. Valid actions: ${validActions.join(
         ", "
       )}`
     );
   }
 
-  // Validate action_data structure
-  const validatedData = validateXpressBeesActionData(action, action_data);
-
-  const payload = [
-    {
-      awb,
-      action,
-      action_data: {
-        ...validatedData,
-        // Add default values where appropriate
-        ...(action === "change_address" && {
-          address_2: validatedData.address_2 || "",
-          city: validatedData.city || "",
-          state: validatedData.state || "",
-          pincode: validatedData.pincode || "",
-        }),
-      },
-    },
-  ];
-
-  const token = await getXpressbeesToken(); // Ensure token handling is implemented
-
-  const response = await axios.post(
-    "https://shipment.xpressbees.com/api/ndr/create",
-    payload,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      timeout: 10000, // Added timeout
+  // Validate action-specific parameters
+  const validateActionData = () => {
+    switch (action) {
+      case "re-attempt":
+        if (!action_data?.re_attempt_date)
+          throw new Error("Missing re_attempt_date (YYYY-MM-DD)");
+        return { re_attempt_date: action_data.re_attempt_date };
+      case "change_address":
+        if (!action_data?.address) throw new Error("Missing address fields");
+        return { address: action_data.address };
+      case "change_phone":
+        if (!action_data?.phone || !/^\d{10}$/.test(action_data.phone)) {
+          throw new Error("Invalid/missing phone (10 digits required)");
+        }
+        return { phone: action_data.phone };
+      default:
+        return {};
     }
+  };
+
+  const payload = {
+    awb,
+    action,
+    action_data: validateActionData(),
+  };
+
+  const token = await getXpressbeesToken(); // Auth token retrieval
+  const response = await axios.post(
+    "https://api.xpressbees.com/ndr/action",
+    payload,
+    { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  return parseXpressBeesResponse(response, awb);
+  // Check for success
+  if (response.data?.status !== "success") {
+    throw new Error(
+      `XpressBees Error: ${response.data?.message || "Action failed"}`
+    );
+  }
+
+  return response.data;
 };
 
 /**
  * Handle EcomExpress NDR actions.
  */
 const handleEcomExpress = async (awb, action, action_data) => {
-  try {
-    const actionMap = { "re-attempt": "RAD", cancel: "RTO" };
-    const instruction = actionMap[action.toLowerCase()];
+  const validActions = ["re-attempt"]; // Only re-attempt supported
 
-    if (!instruction) {
-      throw new Error(`Invalid action for EcomExpress: ${action}`);
-    }
-
-    if (!process.env.ECOM_USERNAME || !process.env.ECOM_PASSWORD) {
-      throw new Error(
-        "EcomExpress credentials are missing in environment variables."
-      );
-    }
-
-    const payload = {
-      username: process.env.ECOM_USERNAME,
-      password: process.env.ECOM_PASSWORD,
-      json_input: JSON.stringify([
-        {
-          awb,
-          instruction,
-          comments: action_data.comments || "NDR resolution request",
-          ...(instruction === "RAD"
-            ? {
-                scheduled_delivery_date:
-                  action_data.scheduled_delivery_date || "",
-                scheduled_delivery_slot:
-                  action_data.scheduled_delivery_slot || "",
-              }
-            : {}),
-          ...(action_data.mobile && { mobile: action_data.mobile }),
-          ...parseAddressFields(action_data),
-        },
-      ]),
-    };
-
-    const response = await axios.post(
-      "https://clbeta.ecomexpress.in/apiv2/ndr_resolutions/",
-      new URLSearchParams(payload),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+  // Validate action type
+  action = action.toLowerCase();
+  if (!validActions.includes(action)) {
+    throw new Error(
+      `EcomExpress: Unsupported action '${action}'. Valid action: ${validActions.join(
+        ", "
+      )}`
     );
-
-    return parseEcomResponse(response, awb);
-  } catch (error) {
-    console.error(`EcomExpress API error: ${error.message}`);
-    throw error; // Rethrow for proper handling in caller function
   }
+
+  // Validate parameters for re-attempt
+  if (!action_data?.scheduled_delivery_date) {
+    throw new Error("Missing scheduled_delivery_date (YYYY-MM-DD)");
+  }
+
+  const payload = new URLSearchParams({
+    username: process.env.ECOM_USERNAME,
+    password: process.env.ECOM_PASSWORD,
+    awb,
+    instruction: "RAD", // Re-Attempt Delivery
+    scheduled_delivery_date: action_data.scheduled_delivery_date,
+    scheduled_delivery_slot:
+      action_data.scheduled_delivery_slot || "10:00 AM - 6:00 PM",
+    comments: action_data?.comments || "NDR resolution",
+  });
+
+  const response = await axios.post(
+    "https://clbeta.ecomexpress.in/apiv2/ndr_action/",
+    payload,
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+  );
+
+  // Check Ecom-specific success code
+  if (response.data?.status_code !== 1) {
+    throw new Error(
+      `EcomExpress Error: ${response.data?.error || "Action failed"}`
+    );
+  }
+
+  return response.data;
 };
 
 /**
  * Handle Delhivery NDR actions.
  */
 const handleDelhivery = async (awb, action, action_data) => {
-  const validActions = ["RE-ATTEMPT", "PICKUP_RESCHEDULE"];
+  const validActions = ["re-attempt", "change_address"]; // Phone change not supported
 
-  if (!validActions.includes(action.toUpperCase())) {
-    throw new Error(`Invalid action for Delhivery: ${action}`);
+  // Validate action type
+  action = action.toLowerCase();
+  if (!validActions.includes(action)) {
+    throw new Error(
+      `Delhivery: Unsupported action '${action}'. Valid actions: ${validActions.join(
+        ", "
+      )}`
+    );
   }
 
-  const payload = { waybill: awb, act: action.toUpperCase() };
+  // Validate parameters
+  const validateActionData = () => {
+    switch (action) {
+      case "re-attempt":
+        if (!action_data?.attempt_date)
+          throw new Error("Missing attempt_date (YYYY-MM-DD)");
+        return { attempt_date: action_data.attempt_date };
+      case "change_address":
+        if (!action_data?.new_address || !action_data?.pincode) {
+          throw new Error("Missing new_address or pincode");
+        }
+        return {
+          new_address: action_data.new_address,
+          city: action_data.city || "",
+          pin: action_data.pincode,
+        };
+      default:
+        return {};
+    }
+  };
+
+  const payload = {
+    waybill: awb,
+    action: action.replace("-", ""), // Delhivery uses "reattempt" not "re-attempt"
+    ...validateActionData(),
+  };
 
   const response = await axios.post(
-    "https://track.delhivery.com/api/p/update",
+    "https://track.delhivery.com/api/v1/ndr/action",
     payload,
     {
       headers: {
-        Authorization: `Bearer ${process.env.DELHIVERY_TOKEN}`,
         "Content-Type": "application/json",
+        Authorization: `Token ${process.env.DELHIVERY_API_KEY}`,
       },
     }
   );
 
-  return parseDelhiveryResponse(response, awb);
+  // Check Delhivery success status
+  if (response.data?.status !== "success") {
+    throw new Error(
+      `Delhivery Error: ${response.data?.message || "Action failed"}`
+    );
+  }
+
+  return response.data;
 };
 
 /**
