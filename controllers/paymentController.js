@@ -15,7 +15,7 @@ const createPayment = async (req, res) => {
     const order = await razorpay.orders.create({
       amount: req.body.amount * 100, // Amount in paise
       currency: "INR",
-      receipt: `receipt_${Date.now()}`,
+      receipt: `receipt_${req.user.id}_${Date.now()}`, // More meaningful receipt ID
     });
 
     if (!order) {
@@ -66,11 +66,8 @@ const createTransactionDetails = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Use the current wallet balance as the transaction amount
-    const walletAmount = user.wallet;
-
     // Add the amount to the user's wallet balance
-    const newBalance = walletAmount + amount;
+    const newBalance = user.wallet + amount;
 
     // Create the new transaction
     const newTransaction = new Transaction({
@@ -78,9 +75,9 @@ const createTransactionDetails = async (req, res) => {
       orderId, // Store Razorpay order ID
       paymentId, // Store Razorpay payment ID
       transactionId: paymentId, // Storing the Razorpay transaction ID
-      amount: walletAmount, // Use the user's wallet balance as the transaction amount
+      amount, // Use the actual amount from the request
       currency,
-      type: ["wallet"], // Transaction type is always 'wallet'
+      type: "wallet", // Fixed: Should be a string, not an array
       description,
       balance: newBalance,
       status: "success",
@@ -88,7 +85,7 @@ const createTransactionDetails = async (req, res) => {
     });
 
     // Update the user's wallet balance
-    user.wallet = newBalance; // Update the user's wallet with the new balance
+    user.wallet = newBalance;
     await user.save();
 
     // Save the transaction to the database
