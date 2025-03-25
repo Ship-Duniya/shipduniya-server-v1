@@ -402,21 +402,25 @@ const getUserShipments = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // Check if the user exists or is authorized to view shipments
+    // Validate userId
     if (!userId) {
       return res.status(400).json({ message: "User ID is missing or invalid" });
     }
 
-    const response = await Shipping.find({ userId }).sort({ updatedAt: -1 });
+    // Fetch shipments and populate order details
+    const shipments = await Shipping.find({ userId })
+      .sort({ updatedAt: -1 })
+      .populate({
+        path: "orderIds", // Populate order details
+        model: "Order",
+      });
 
-    // If no shipments found, return a 404 status
-    if (!response || response.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No shipments found for this user" });
+    // If no shipments found
+    if (!shipments || shipments.length === 0) {
+      return res.status(404).json({ message: "No shipments found for this user" });
     }
-    console.log(response);
-    res.status(200).json(response);
+
+    res.status(200).json(shipments);
   } catch (error) {
     console.error("Error in getUserShipments:", error.message);
     return res.status(500).json({
