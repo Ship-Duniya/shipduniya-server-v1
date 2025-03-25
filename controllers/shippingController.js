@@ -95,7 +95,7 @@ const createForwardShipping = async (req, res) => {
     }
 
     // Validate warehouse data
-    const [pickupWarehouse, rtoWarehouse] = await Promise.all([
+    const [pickupWarehouse, rtoWarehouse] = await Promise.all([ 
       Warehouse.findById(pickup),
       Warehouse.findById(rto),
     ]);
@@ -151,6 +151,9 @@ const createForwardShipping = async (req, res) => {
     user.wallet -= totalShippingCost;
     await user.save();
 
+    // Assuming the transaction ID is generated or fetched from an external service
+    const transactionId = generateTransactionId(); // You can replace this with an actual transaction ID generation logic
+
     const transaction = await Transaction.create({
       userId: user._id,
       type: ["wallet", "shipping"],
@@ -159,6 +162,7 @@ const createForwardShipping = async (req, res) => {
       balance: user.wallet,
       description: "Shipping charges deducted",
       status: "success",
+      transactionId: transactionId, // Add the transactionId here
     });
 
     // Process orders
@@ -195,6 +199,21 @@ const createForwardShipping = async (req, res) => {
         };
 
         const shipping = await Shipping.create(shippingData);
+
+        // Create shipping transaction with AWB and shipment ID as regular fields
+        await Transaction.create({
+          userId: user._id,
+          type: ["shipping"],
+          amount: shippingData.partnerDetails.charges,
+          currency: "INR",
+          balance: user.wallet,
+          description: "Shipping charge for order " + order._id,
+          status: "success",
+          transactionId: transactionId, // Same transaction ID for all shipping-related transactions
+          awbNumber: shippingData.awbNumber, // Store AWB number directly
+          shipmentId: shippingData.shipmentId, // Store shipment ID directly
+        });
+
         processedOrders.push(order._id);
 
         await Order.findByIdAndUpdate(order._id, {
@@ -221,6 +240,11 @@ const createForwardShipping = async (req, res) => {
     });
   }
 };
+
+// You can implement a function to generate the transaction ID if needed
+function generateTransactionId() {
+  return 'txn_' + Date.now(); // Simple example, replace with your actual logic
+}
 
 const createReverseShipping = async (req, res) => {
   const { orderIds } = req.body; // Check if it's bulk shipping and include orders in the request
