@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 require("dotenv").config();
 const Warehouse = require("../models/wareHouse");
 const Shipping = require("../models/Shipping");
@@ -241,9 +242,15 @@ const createForwardShipping = async (req, res) => {
   }
 };
 
-// You can implement a function to generate the transaction ID if needed
 function generateTransactionId() {
-  return 'txn_' + Date.now(); // Simple example, replace with your actual logic
+  // Generate a random string using crypto
+  const randomBytes = crypto.randomBytes(16).toString("hex"); // Generates 32 characters of random hex
+  const timestamp = Date.now(); // Get current timestamp
+
+  // Combine the random bytes with the timestamp to create a unique transaction ID
+  const transactionId = `txn_${timestamp}_${randomBytes}`;
+
+  return transactionId;
 }
 
 const createReverseShipping = async (req, res) => {
