@@ -22,18 +22,24 @@ const sendPhoneOtp = async (req, res) => {
   const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
   const phoneNumber = req.body.phone;
 
+  // Store OTP in the database
+  await OtpModel.updateOne(
+    { phone: phoneNumber, type: "phone" }, 
+    { otp, verified: false, createdAt: new Date() }, 
+    { upsert: true } // Create a new record if it doesn't exist
+  );
+
   const options = {
     method: "POST",
     url: "https://www.fast2sms.com/dev/bulkV2",
     headers: {
-      authorization:
-        "7yHfa4W3jQUtzpoCCGbLSkhoZGXEir0vQh5ARSodqsbCuAD3dXlG3Y6DAA91",
+      authorization: "7yHfa4W3jQUtzpoCCGbLSkhoZGXEir0vQh5ARSodqsbCuAD3dXlG3Y6DAA91",
       "Content-Type": "application/json",
     },
     data: {
-      message: `Welcome to Shipduniya...!!. Your SignUp OTP code is ${otp}`,
+      message: `Welcome to Shipduniya...!! Your SignUp OTP code is ${otp}`,
       language: "english",
-      route: "q", // 'q' is for Quick SMS
+      route: "q",
       numbers: phoneNumber,
     },
   };
@@ -41,14 +47,9 @@ const sendPhoneOtp = async (req, res) => {
   try {
     const response = await axios.request(options);
     console.log("OTP sent successfully:", response.data);
-    res
-      .status(200)
-      .json({ success: true, otp, message: "OTP sent successfully" });
+    res.status(200).json({ success: true, message: "OTP sent successfully" });
   } catch (error) {
-    console.error(
-      "Error sending OTP:",
-      error.response ? error.response.data : error.message
-    );
+    console.error("Error sending OTP:", error.response ? error.response.data : error.message);
     res.status(500).json({ success: false, message: "Failed to send OTP" });
   }
 };
@@ -81,7 +82,7 @@ const sendEmailOtp = async (req, res) => {
       secure: false,
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
       tls: { ciphers: "SSLv3" },
-    });    
+    });
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
@@ -125,7 +126,14 @@ const verifyPhoneOtp = async (req, res) => {
       return res.status(400).json({ message: "Phone and OTP are required." });
 
     const otpRecord = await OtpModel.findOne({ phone, type: "phone" });
+
     if (!otpRecord) return res.status(400).json({ message: "OTP not found." });
+
+    // Check OTP expiration (optional, set 5-minute expiry)
+    const now = new Date();
+    if (now - otpRecord.createdAt > 5 * 60 * 1000) {
+      return res.status(400).json({ message: "OTP expired." });
+    }
 
     if (otpRecord.otp !== otp)
       return res.status(400).json({ message: "Invalid OTP." });
