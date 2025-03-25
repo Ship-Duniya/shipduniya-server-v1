@@ -96,7 +96,7 @@ const createForwardShipping = async (req, res) => {
     }
 
     // Validate warehouse data
-    const [pickupWarehouse, rtoWarehouse] = await Promise.all([ 
+    const [pickupWarehouse, rtoWarehouse] = await Promise.all([
       Warehouse.findById(pickup),
       Warehouse.findById(rto),
     ]);
@@ -116,11 +116,10 @@ const createForwardShipping = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const userType = user.customerType;
-
     let totalShippingCost = 0;
     const processedOrders = [];
     const failedOrders = [];
+    const shippingRecords = [];
 
     for (const order of orders) {
       try {
@@ -139,36 +138,8 @@ const createForwardShipping = async (req, res) => {
 
         const shippingCost = calculateShippingCharges(order);
         totalShippingCost += shippingCost;
-      } catch (error) {
-        failedOrders.push({ orderId: order._id, error: error.message });
-      }
-    }
 
-    if (user.wallet < totalShippingCost) {
-      return res.status(400).json({ message: "Insufficient wallet balance" });
-    }
-
-    // Deduct wallet amount and create transaction
-    user.wallet -= totalShippingCost;
-    await user.save();
-
-    // Assuming the transaction ID is generated or fetched from an external service
-    const transactionId = generateTransactionId(); // You can replace this with an actual transaction ID generation logic
-
-    const transaction = await Transaction.create({
-      userId: user._id,
-      type: ["wallet", "shipping"],
-      amount: totalShippingCost,
-      currency: "INR",
-      balance: user.wallet,
-      description: "Shipping charges deducted",
-      status: "success",
-      transactionId: transactionId, // Add the transactionId here
-    });
-
-    // Process orders
-    for (const order of orders) {
-      try {
+        // Create shipping entry
         const shippingData = {
           userId: order.userId,
           orderIds: [order._id],
@@ -193,38 +164,53 @@ const createForwardShipping = async (req, res) => {
           partnerDetails: {
             name: normalizedPartner,
             id: generatePartnerId(normalizedPartner),
-            charges: calculateShippingCharges(order),
+            charges: shippingCost,
           },
           priceForCustomer: order.collectableValue || 0,
           status: "pending",
         };
 
         const shipping = await Shipping.create(shippingData);
-
-        // Create shipping transaction with AWB and shipment ID as regular fields
-        await Transaction.create({
-          userId: user._id,
-          type: ["shipping"],
-          amount: shippingData.partnerDetails.charges,
-          currency: "INR",
-          balance: user.wallet,
-          description: "Shipping charge for order " + order._id,
-          status: "success",
-          transactionId: transactionId, // Same transaction ID for all shipping-related transactions
-          awbNumber: shippingData.awbNumber, // Store AWB number directly
-          shipmentId: shippingData.shipmentId, // Store shipment ID directly
+        shippingRecords.push({
+          orderId: order._id,
+          awbNumber: shippingData.awbNumber,
+          shipmentId: shippingData.shipmentId,
         });
-
-        processedOrders.push(order._id);
 
         await Order.findByIdAndUpdate(order._id, {
           shipped: true,
           shipping: shipping._id,
         });
+
+        processedOrders.push(order._id);
       } catch (error) {
         failedOrders.push({ orderId: order._id, error: error.message });
       }
     }
+
+    if (user.wallet < totalShippingCost) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    // Deduct wallet amount **only once**
+    user.wallet -= totalShippingCost;
+    await user.save();
+
+    // Generate **single** transaction ID
+    const transactionId = generateTransactionId();
+
+    // Create **one** transaction for the entire shipping process
+    const transaction = await Transaction.create({
+      userId: user._id,
+      type: ["wallet", "shipping"],
+      amount: totalShippingCost,
+      currency: "INR",
+      balance: user.wallet,
+      description: `Shipping charges deducted for orders: ${processedOrders.join(", ")}`,
+      status: "success",
+      transactionId: transactionId,
+      shippingDetails: shippingRecords, // Store all shipping AWB and Shipment IDs
+    });
 
     res.json({
       message: "Bulk shipping processing completed",
@@ -244,11 +230,10 @@ const createForwardShipping = async (req, res) => {
 
 function generateTransactionId() {
   // Generate a random string using crypto
-  const randomBytes = crypto.randomBytes(16).toString("hex"); // Generates 32 characters of random hex
-  const timestamp = Date.now(); // Get current timestamp
+  const randomBytes = crypto.randomBytes(8).toString('hex'); // Generates 16 characters of random hex (8 bytes)
 
   // Combine the random bytes with the timestamp to create a unique transaction ID
-  const transactionId = `txn_${timestamp}_${randomBytes}`;
+  const transactionId = `txn_${randomBytes}`;
 
   return transactionId;
 }
