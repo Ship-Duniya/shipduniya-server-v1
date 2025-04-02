@@ -54,7 +54,7 @@ async function calculateCharges(req, res) {
       ) {
         const freightCharge = partner.freight * chargeableWeight;
         const codCharge =
-          productType === "COD" ? (partner.codPercentage / 100) * CODAmount : 0;
+          productType === "cod" ? (partner.codPercentage / 100) * CODAmount : 0;
         const total = (freightCharge + codCharge) * multiplier;
 
         chargesBreakdown.push({
