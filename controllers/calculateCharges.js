@@ -23,8 +23,6 @@ async function calculateCharges(req, res) {
     carrierName,
   } = req.body;
 
-  chargeableWeight = chargeableWeight / 1000;
-
   try {
     // Validate required fields
     if (
