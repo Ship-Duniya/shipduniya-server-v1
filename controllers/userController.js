@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const axios = require("axios");
 require("dotenv").config();
 const twilio = require("twilio");
 const jwt = require("jsonwebtoken");
@@ -16,6 +17,42 @@ const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
+
+const sendPhoneOtp = async (req, res) => {
+  const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
+  const phoneNumber = req.body.phone;
+
+  // Store OTP in the database
+  await OtpModel.updateOne(
+    { phone: phoneNumber, type: "phone" }, 
+    { otp, verified: false, createdAt: new Date() }, 
+    { upsert: true } // Create a new record if it doesn't exist
+  );
+
+  const options = {
+    method: "POST",
+    url: "https://www.fast2sms.com/dev/bulkV2",
+    headers: {
+      authorization: "7yHfa4W3jQUtzpoCCGbLSkhoZGXEir0vQh5ARSodqsbCuAD3dXlG3Y6DAA91",
+      "Content-Type": "application/json",
+    },
+    data: {
+      message: `Welcome to Shipduniya...!! Your SignUp OTP code is ${otp}`,
+      language: "english",
+      route: "q",
+      numbers: phoneNumber,
+    },
+  };
+
+  try {
+    const response = await axios.request(options);
+    console.log("OTP sent successfully:", response.data);
+    res.status(200).json({ success: true, message: "OTP sent successfully" });
+  } catch (error) {
+    console.error("Error sending OTP:", error.response ? error.response.data : error.message);
+    res.status(500).json({ success: false, message: "Failed to send OTP" });
+  }
+};
 
 const sendEmailOtp = async (req, res) => {
   try {
@@ -40,55 +77,23 @@ const sendEmailOtp = async (req, res) => {
 
     // Send OTP via Email
     const transporter = nodemailer.createTransport({
-      service: "gmail",
+      host: "smtp.office365.com",
+      port: 587,
+      secure: false,
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      tls: { ciphers: "SSLv3" },
     });
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
       subject: "Your Email OTP",
-      text: `Your OTP for email verification is ${emailOtp}. It expires in 10 minutes.`,
+      text: `Welcome to Shipduniya!!\nYour OTP for email verification is ${emailOtp}. It expires in 10 minutes.`,
     });
 
     res.status(200).json({ message: "Email OTP sent successfully." });
   } catch (error) {
     console.error("Error sending email OTP:", error);
-    res.status(500).json({ message: "Error sending OTP. Try again later." });
-  }
-};
-
-const sendPhoneOtp = async (req, res) => {
-  try {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json({ message: "Phone is required." });
-
-    const phoneOtp = Math.floor(1000 + Math.random() * 9000);
-    console.log(`Phone OTP: ${phoneOtp}`);
-
-    // Save OTP in the database
-    await OtpModel.findOneAndUpdate(
-      { phone, type: "phone" },
-      {
-        phone,
-        otp: phoneOtp,
-        type: "phone",
-        verified: false,
-        createdAt: new Date(),
-      },
-      { upsert: true, new: true }
-    );
-
-    // Send OTP via Twilio SMS
-    await twilioClient.messages.create({
-      body: `Your OTP for phone verification is ${phoneOtp}. It expires in 10 minutes.`,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: phone, // Ensure phone number is in E.164 format (+91 for India)
-    });
-
-    res.status(200).json({ message: "Phone OTP sent successfully." });
-  } catch (error) {
-    console.error("Error sending phone OTP:", error);
     res.status(500).json({ message: "Error sending OTP. Try again later." });
   }
 };
@@ -121,7 +126,14 @@ const verifyPhoneOtp = async (req, res) => {
       return res.status(400).json({ message: "Phone and OTP are required." });
 
     const otpRecord = await OtpModel.findOne({ phone, type: "phone" });
+
     if (!otpRecord) return res.status(400).json({ message: "OTP not found." });
+
+    // Check OTP expiration (optional, set 5-minute expiry)
+    const now = new Date();
+    if (now - otpRecord.createdAt > 5 * 60 * 1000) {
+      return res.status(400).json({ message: "OTP expired." });
+    }
 
     if (otpRecord.otp !== otp)
       return res.status(400).json({ message: "Invalid OTP." });
