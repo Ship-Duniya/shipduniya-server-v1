@@ -56,10 +56,7 @@ async function calculateCharges(req, res) {
 
     // Process static rates from charge sheet
     for (const partner of partnerCharges) {
-      if (
-        chargeableWeight <= partner.chargeableWeight &&
-        partner.carrierName.toLowerCase() === carrierName.toLowerCase()
-      ) {
+      if (chargeableWeight <= partner.chargeableWeight) {
         const freightCharge = partner.freight * chargeableWeight;
         const codCharge = normalizedProductType === "cod" 
           ? (partner.codPercentage / 100) * CODAmount 
@@ -126,7 +123,7 @@ async function calculateCharges(req, res) {
         const baseTotal = service.total_charges || 0;
         
         chargesBreakdown.push({
-          carrierName: carrierName,
+          carrierName: "Delhivery",
           serviceType: service.name,
           totalPrice: baseTotal * multiplier,
           codCharge: baseCod * multiplier,
@@ -213,7 +210,7 @@ async function calculateShippingCharges(req, res) {
       const { chargeableWeight, CODAmount, productType, pincode: destinationPincode, height, breadth, length } = orderDetails;
       if (!destinationPincode || isNaN(chargeableWeight)) continue;
 
-      const carrierResponse = await getCarrierCharges1(requestedCarrier, originPincode, destinationPincode, chargeableWeight, CODAmount, productType, height, breadth, length);
+      const carrierResponse = await getCarrierCharges(requestedCarrier, originPincode, destinationPincode, chargeableWeight, CODAmount, productType, height, breadth, length);
 
       if (carrierResponse?.services) {
         carrierResponse.services.forEach((service) => {
@@ -237,20 +234,34 @@ async function calculateShippingCharges(req, res) {
   }
 }
 
+async function fetchOrderDetails(orderId) {
+  const order = await Order.findById(orderId);
+  if (!order) return null;
+  return {
+    chargeableWeight: parseFloat(order.volumetricWeight) || parseFloat(order.actualWeight),
+    CODAmount: order.collectableValue,
+    pincode: order.pincode,
+    productType: order.type,
+    height: order.height,
+    breadth: order.breadth,
+    length: order.length,
+  };
+}
 
-async function getCarrierCharges1(carrier, origin, destination, weight, codAmount, productType, height, breadth, length) {
+async function getCarrierCharges(carrier, origin, destination, weight, codAmount, productType, height, breadth, length) {
   switch (carrier) {
     case "ecom":
-      return getEcomCharges1(origin, destination, weight, codAmount, productType);
+      return getEcomCharges(origin, destination, weight, codAmount, productType);
     case "xpressbees":
-      return getXpressbeesCharges1(origin, destination, weight, codAmount, productType, height, breadth, length);
+      return getXpressbeesCharges(origin, destination, weight, codAmount, productType, height, breadth, length);
     case "delhivery":
-      return getDelhiveryCharges1(origin, destination, weight, codAmount, productType);
+      return getDelhiveryCharges(origin, destination, weight, codAmount, productType);
     default:
       return null;
   }
 }
 
+// Carrier API Helpers
 async function getXpressbeesCharges(origin, destination, weight, codAmount, productType) {
   try {
     const token = await getXpressbeesToken();
@@ -306,7 +317,7 @@ async function getDelhiveryCharges(origin, destination, weight, codAmount, produ
         Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
         "Content-Type": "application/json",
       },
-      timeout: 10000,
+      timeout: 5000,
     });
 
     return {
@@ -362,234 +373,6 @@ async function getEcomCharges(origin, destination, weight, codAmount, productTyp
     };
   } catch (error) {
     console.error("Ecom Express API error:", error.message);
-    return null;
-  }
-}
-
-
-async function fetchOrderDetails(orderId) {
-  const order = await Order.findById(orderId);
-  if (!order) return null;
-  return {
-    chargeableWeight: parseFloat(order.volumetricWeight) || parseFloat(order.actualWeight),
-    CODAmount: order.collectableValue,
-    pincode: order.pincode,
-    productType: order.type,
-    height: order.height,
-    breadth: order.breadth,
-    length: order.length,
-  };
-}
-
-async function getCarrierCharges(carrier, origin, destination, weight, codAmount, productType, height, breadth, length) {
-  switch (carrier) {
-    case "ecom":
-      return getEcomCharges(origin, destination, weight, codAmount, productType);
-    case "xpressbees":
-      return getXpressbeesCharges(origin, destination, weight, codAmount, productType, height, breadth, length);
-    case "delhivery":
-      return getDelhiveryCharges(origin, destination, weight, codAmount, productType);
-    default:
-      return null;
-  }
-}
-
-async function getEcomCharges(origin, destination, weight, codAmount, productType) {
-  try {
-    if (!origin || !destination) {
-      console.error("❌ Error: Origin or Destination Pincode is missing!");
-      return null;
-    }
-
-    if (isNaN(weight) || weight <= 0) {
-      console.error("❌ Error: Invalid Chargeable Weight:", weight);
-      return null;
-    }
-
-    // Add default value for productType
-    const product = (productType || "ppd").toLowerCase();
-
-    // Prepare payload
-    const payload = {
-      orginPincode: origin,
-      destinationPincode: destination,
-      productType: product === "cod" ? "cod" : "ppd", // Default to prepaid
-      chargeableWeight: Math.max(1, weight), // Minimum weight is 1
-      codAmount: product === "cod" ? codAmount || 0 : 0,
-    };
-
-    // URL encode the JSON input
-    const jsonInput = JSON.stringify([payload]); // No encoding
-
-    // Prepare form data
-    const formData = new URLSearchParams();
-    formData.append("username", encodeURIComponent(process.env.ECOM_USERID));
-    formData.append("password", encodeURIComponent(process.env.ECOM_PASSWORD));
-    formData.append("json_input", jsonInput);
-
-    // Make the API request
-    const response = await axios.post(
-      "https://ratecard.ecomexpress.in/services/rateCalculatorAPI/",
-      formData,
-      {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        timeout: 5000,
-      }
-    );
-
-    // Validate response
-    if (!Array.isArray(response.data) || response.data.length === 0) {
-      console.error("❌ Invalid Ecom response format:", response.data);
-      return null;
-    }
-
-    const ecomData = response.data[0];
-
-    if (!ecomData.success) {
-      console.error("❌ Ecom API error:", ecomData.errors);
-      return null;
-    }
-
-    // Extract charges from the response
-    const freightCharge = ecomData.FRT || 0; // Freight charge
-    const codCharge = ecomData.COD || 0; // COD charge
-    const totalCharge = ecomData.total_charge || 0; // Total charge
-    const otherCharges = totalCharge - freightCharge - codCharge; // Other charges
-
-    // Return the charges breakdown
-    return {
-      services: [
-        {
-          name: "Ecom Express",
-          total_charges: totalCharge,
-          cod_charge: codCharge,
-          freight_charge: freightCharge,
-          other_charges: otherCharges,
-        },
-      ],
-    };
-  } catch (error) {
-    console.error("❌ Error fetching Ecom charges:", error.message);
-    return null;
-  }
-}
-
-// Updated Xpressbees handler
-async function getXpressbeesCharges(
-  origin,
-  destination,
-  weight,
-  codAmount,
-  productType,
-  retries = 3,
-  timeout = 10000
-) {
-  try {
-    if (!origin || !destination) {
-      console.error("❌ Error: Origin or Destination Pincode is missing!");
-      return null;
-    }
-
-    const weightInGrams = Math.round(weight * 1000);
-    const token = await getXpressbeesToken();
-
-    const url = "https://shipment.xpressbees.com/api/courier/serviceability";
-    const payload = {
-      origin: origin.toString(),
-      destination: destination.toString(),
-      payment_type: productType === "COD" ? "cod" : "prepaid",
-      weight: weightInGrams.toString(),
-      length: "10", // Default dimensions
-      breadth: "10",
-      height: "10",
-    };
-
-    if (productType === "COD") {
-      payload.order_amount = codAmount.toString();
-    }
-
-    const response = await axios.post(url, payload, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      timeout: timeout,
-    });
-
-    if (!response.data?.data) {
-      console.error("❌ Invalid Xpressbees response format:", response.data);
-      return null;
-    }
-
-    return {
-      services: response.data.data.map((service) => ({
-        name:
-          service.name.replace(/Xpressbees/gi, "").trim() || "Standard Service",
-        total_charges: service.total_charges,
-        cod_charge: service.cod_charges || 0,
-        freight_charge: service.freight_charges || 0,
-        other_charges: service.total_charges - (service.freight_charges || 0) - (service.cod_charges || 0),
-      })),
-    };
-  } catch (error) {
-    console.error("❌ Error fetching Xpressbees charges:", error.message);
-
-    // Retry mechanism
-    if (retries > 0) {
-      console.log(`Retrying... Attempts left: ${retries}`);
-      return getXpressbeesCharges(
-        origin,
-        destination,
-        weight,
-        codAmount,
-        productType,
-        retries - 1,
-        timeout
-      );
-    }
-
-    return null;
-  }
-}
-
-// Updated Delhivery handler
-async function getDelhiveryCharges(origin, destination, weight, codAmount, productType) {
-  try {
-    if (!origin || !destination) return null;
-    if (isNaN(weight) || weight <= 0) return null;
-
-    const weightInGrams = Math.round(weight * 1000);
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${origin}&d_pin=${destination}&cgm=${weightInGrams}&pt=${
-      productType === "COD" ? "COD" : "Pre-paid"
-    }&cod=${productType === "COD" ? codAmount : 0}`;
-
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      timeout: 5000,
-    });
-
-    if (!response.data || !Array.isArray(response.data)) {
-      console.error("❌ Invalid Delhivery response:", response.data);
-      return null;
-    }
-
-    return {
-      services: response.data.map((service, index) => ({
-        name: service.service_type
-          ? `${service.service_type} Service`
-          : `Delhivery Service ${index + 1}`,
-        total_charges: service.total_amount || 0,
-        cod_charge: service.charge_COD || 0,
-        freight_charge: service.charge_DL || 0,
-        other_charges: service.total_amount - (service.charge_DL || 0) - (service.charge_COD || 0),
-      })),
-    };
-  } catch (error) {
-    console.error("❌ Error fetching Delhivery charges:", error.message);
     return null;
   }
 }
