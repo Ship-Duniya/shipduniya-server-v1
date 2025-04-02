@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const upload = multer();
+const upload = require("../middlewares/uploadMiddleware");
 const { authMiddleware, roleMiddleware } = require("../middlewares/auth");
 const {
   createForwardOrder,
@@ -14,7 +14,12 @@ const {
 } = require("../controllers/OrderController");
 
 // router.post('/create', authMiddleware, createOrder);
-router.post("/create-forward-order", authMiddleware, createForwardOrder);
+router.post(
+  "/create-forward-order",
+  authMiddleware,
+  upload.single("file"),
+  createForwardOrder
+);
 
 // Route for editing an order by the user
 router.put("/:orderId", authMiddleware, editOrderByUser);
