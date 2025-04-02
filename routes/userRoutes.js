@@ -22,6 +22,7 @@ const {
   verifyPhoneOtp,
   resetPassword,
   updateActiveBank,
+  forgotPassword
 } = require("../controllers/userController");
 
 // User registration
