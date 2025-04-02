@@ -4,91 +4,87 @@ const FormData = require("form-data");
 const ExcelJS = require("exceljs");
 
 const createForwardOrder = async (req, res) => {
-  const userId = req.user.id; // Assumes `req.user.id` is set by authentication middleware.
+  const userId = req.user.id;
 
   try {
-    // Verify user exists.
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Check if the request is for bulk or single order.
     if (req.file) {
-      // Bulk order (Excel file provided).
       const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(req.file.buffer); // Load the Excel file buffer
-
-      const worksheet = workbook.worksheets[0]; // Get the first sheet (assuming only one sheet)
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.worksheets[0];
       const sheetData = [];
 
-      // Iterate through rows in the worksheet and extract data
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber > 1) {
-          // Skipping the header row (assumes row 1 is header)
+          // Skip header row
           sheetData.push({
-            orderType: row.getCell(1).value || "PREPAID",
-            consignee: row.getCell(2).value || user.name,
-            consigneeAddress1: row.getCell(3).value,
-            consigneeAddress2: row.getCell(4).value,
-            city: row.getCell(5).value,
-            state: row.getCell(6).value,
-            pincode: row.getCell(7).value,
+            // Corrected column mapping based on your Excel structure
+            consignee: row.getCell(1).value,
+            consigneeAddress1: row.getCell(2).value,
+            consigneeAddress2: row.getCell(3).value,
+            orderType: (row.getCell(4).value || "PREPAID").toUpperCase(),
+            pincode: row.getCell(5).value,
+            mobile: row.getCell(6).value || user.mobile,
+            invoiceNumber:
+              row.getCell(7).value ||
+              `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             telephone: row.getCell(8).value || user.telephone,
-            mobile: row.getCell(9).value || user.mobile,
-            collectableValue: row.getCell(10).value,
-            declaredValue: row.getCell(11).value,
-            itemDescription: row.getCell(12).value,
-            dgShipment: row.getCell(13).value || false,
-            quantity: row.getCell(14).value || 1,
-            height: row.getCell(15).value,
-            breadth: row.getCell(16).value,
-            length: row.getCell(17).value,
-            volumetricWeight: row.getCell(18).value || 0,
-            actualWeight: row.getCell(19).value,
+            city: row.getCell(9).value,
+            state: row.getCell(10).value,
+            length: row.getCell(11).value,
+            breadth: row.getCell(12).value,
+            height: row.getCell(13).value,
+            collectableValue: row.getCell(14).value || 0,
+            declaredValue: row.getCell(15).value || 0,
+            itemDescription: row.getCell(16).value,
+            dgShipment: row.getCell(17).value || false,
+            quantity: row.getCell(18).value || 1,
+            volumetricWeight: row.getCell(19).value || 0,
+            actualWeight: row.getCell(20).value,
           });
         }
       });
 
-      if (!sheetData || sheetData.length === 0) {
+      if (sheetData.length === 0) {
         return res
           .status(400)
           .json({ error: "Uploaded file is empty or invalid" });
       }
 
-      // Map the data to orders
       const bulkOrders = sheetData.map((order) => ({
         userId: userId,
-        orderId: `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // Unique Order ID.
-        orderType: order.orderType || "prepaid",
+        orderId: `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        orderType: order.orderType,
         consignee: order.consignee || user.name,
         consigneeAddress1: order.consigneeAddress1,
         consigneeAddress2: order.consigneeAddress2,
         city: order.city,
         state: order.state,
         pincode: order.pincode,
-        telephone: order.telephone || user.telephone,
-        mobile: order.mobile || user.mobile,
+        telephone: order.telephone,
+        mobile: order.mobile,
         collectableValue: order.collectableValue,
         declaredValue: order.declaredValue,
         itemDescription: order.itemDescription,
-        dgShipment: order.dgShipment || false,
-        quantity: order.quantity || 1,
+        dgShipment: order.dgShipment,
+        quantity: order.quantity,
         height: order.height,
         breadth: order.breadth,
         length: order.length,
-        volumetricWeight: order.volumetricWeight || 0,
+        volumetricWeight: order.volumetricWeight,
         actualWeight: order.actualWeight,
-        invoiceNumber: `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // Unique Invoice Number
+        invoiceNumber: order.invoiceNumber,
         shipped: false,
         status: "pending",
         partner: null,
         events: [],
       }));
 
-      // Save all orders in bulk.
       const createdOrders = await Order.insertMany(bulkOrders);
-
       return res.status(200).json({
         success: true,
         message: `${createdOrders.length} orders created successfully.`,
