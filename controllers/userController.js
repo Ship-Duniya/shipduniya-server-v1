@@ -148,28 +148,28 @@ const verifyPhoneOtp = async (req, res) => {
 };
 
 const forgotPassword = async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res
-      .status(400)
-      .json({ error: "Email and new password are required." });
-  }
-
   try {
-    const user = await User.findOne({ email });
+    const { phone, password } = req.body;
+
+    if (!phone || !password) {
+      return res.status(400).json({ message: "Phone and new password are required." });
+    }
+
+    // Find the user by phone number
+    const user = await User.findOne({ phone });
 
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
 
-    user.password = password; // Ensure password hashing is applied
+    // Update password (ensure password is hashed before saving)
+    user.password = password;
     await user.save();
 
     res.status(200).json({ message: "Password reset successfully." });
   } catch (error) {
     console.error("Error resetting password:", error);
-    res.status(500).json({ error: "Failed to reset password." });
+    res.status(500).json({ message: "Failed to reset password." });
   }
 };
 
