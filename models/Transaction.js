@@ -32,18 +32,21 @@ const transactionSchema = new mongoose.Schema(
       enum: ["pending", "success", "rejected"],
       default: "pending",
     },
-    metadata: {
-      type: Object, // Store additional data, e.g., shipment ID or weight details
-    },
     transactionId: {
-      // New field for storing Razorpay transaction ID
-      type: String,
-      required: false, // This can be optional for all types except wallet transactions
+      type: String, // Razorpay transaction ID or custom transaction ID
+      required: false,
     },
     paymentId: {
-      // New field for storing payment ID
+      type: String, // Payment ID for external payment systems
+      required: false,
+    },
+    awbNumber: { // Add the AWB number here
       type: String,
-      required: false, // Optional field that can be used for various payment systems
+      required: false,
+    },
+    shipmentId: { // Add the shipment ID here
+      type: String,
+      required: false,
     },
   },
   {

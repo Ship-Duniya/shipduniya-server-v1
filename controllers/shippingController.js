@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 require("dotenv").config();
 const Warehouse = require("../models/wareHouse");
 const Shipping = require("../models/Shipping");
@@ -72,7 +73,8 @@ const generatePartnerId = (partner) => {
 // Updated controller with implemented functions
 const createForwardShipping = async (req, res) => {
   try {
-    const { orderIds, pickup, rto, selectedPartner, userType } = req.body;
+    const userId = req.user.id;
+    const { orderIds, pickup, rto, selectedPartner } = req.body;
 
     // Validate partner selection
     const normalizedPartner = selectedPartner
@@ -103,19 +105,24 @@ const createForwardShipping = async (req, res) => {
       if (!warehouse) throw new Error("Warehouse not found");
       if (!/^\d{6}$/.test(warehouse.pincode))
         throw new Error("Invalid warehouse pincode");
-      // if (!/^\d{10}$/.test(warehouse.contactNumber)) throw new Error('Invalid warehouse contact');
     };
 
     validateWarehouse(pickupWarehouse);
     validateWarehouse(rtoWarehouse);
 
-    // Process orders
+    // Fetch user and validate wallet balance
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let totalShippingCost = 0;
     const processedOrders = [];
     const failedOrders = [];
+    const shippingRecords = [];
 
     for (const order of orders) {
       try {
-        // Validate order data
         const requiredFields = [
           "consignee",
           "consigneeAddress1",
@@ -124,13 +131,15 @@ const createForwardShipping = async (req, res) => {
           "pincode",
           "mobile",
         ];
-
         const missingFields = requiredFields.filter((field) => !order[field]);
         if (missingFields.length > 0) {
           throw new Error(`Missing fields: ${missingFields.join(", ")}`);
         }
 
-        // Create shipping document
+        const shippingCost = calculateShippingCharges(order);
+        totalShippingCost += shippingCost;
+
+        // Create shipping entry
         const shippingData = {
           userId: order.userId,
           orderIds: [order._id],
@@ -140,42 +149,68 @@ const createForwardShipping = async (req, res) => {
           shipmentId: generateShipmentId(),
           pickupAddress: {
             name: pickupWarehouse.name,
-            mobile: pickupWarehouse.managerMobile, // Match warehouse field
+            mobile: pickupWarehouse.managerMobile,
             pincode: pickupWarehouse.pincode,
-            addressLine1: pickupWarehouse.address, // Map warehouse.address to addressLine1
-            addressLine2: "", // Add empty string if not available
+            addressLine1: pickupWarehouse.address,
+            addressLine2: "",
           },
           returnAddress: {
             name: rtoWarehouse.name,
-            mobile: rtoWarehouse.managerMobile, // Match warehouse field
+            mobile: rtoWarehouse.managerMobile,
             pincode: rtoWarehouse.pincode,
-            addressLine1: rtoWarehouse.address, // Map warehouse.address to addressLine1
+            addressLine1: rtoWarehouse.address,
             addressLine2: "",
           },
           partnerDetails: {
             name: normalizedPartner,
             id: generatePartnerId(normalizedPartner),
-            charges: calculateShippingCharges(order),
+            charges: shippingCost,
           },
-          priceForCustomer: order.collectableValue || 0,
+          priceForCustomer: totalShippingCost || 0,
           status: "pending",
         };
 
         const shipping = await Shipping.create(shippingData);
-        processedOrders.push(order._id);
+        shippingRecords.push({
+          orderId: order._id,
+          awbNumber: shippingData.awbNumber,
+          shipmentId: shippingData.shipmentId,
+        });
 
-        // Update order status
         await Order.findByIdAndUpdate(order._id, {
           shipped: true,
           shipping: shipping._id,
         });
+
+        processedOrders.push(order._id);
       } catch (error) {
-        failedOrders.push({
-          orderId: order._id,
-          error: error.message,
-        });
+        failedOrders.push({ orderId: order._id, error: error.message });
       }
     }
+
+    if (user.wallet < totalShippingCost) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    // Deduct wallet amount **only once**
+    user.wallet -= totalShippingCost;
+    await user.save();
+
+    // Generate **single** transaction ID
+    const transactionId = generateTransactionId();
+
+    // Create **one** transaction for the entire shipping process
+    const transaction = await Transaction.create({
+      userId: user._id,
+      type: ["wallet", "shipping"],
+      amount: totalShippingCost,
+      currency: "INR",
+      balance: user.wallet,
+      description: `Shipping charges deducted for orders: ${processedOrders.join(", ")}`,
+      status: "success",
+      transactionId: transactionId,
+      shippingDetails: shippingRecords, // Store all shipping AWB and Shipment IDs
+    });
 
     res.json({
       message: "Bulk shipping processing completed",
@@ -183,6 +218,7 @@ const createForwardShipping = async (req, res) => {
       failedCount: failedOrders.length,
       processedOrders,
       failedOrders,
+      transactionId: transaction._id,
     });
   } catch (error) {
     res.status(500).json({
@@ -191,6 +227,16 @@ const createForwardShipping = async (req, res) => {
     });
   }
 };
+
+function generateTransactionId() {
+  // Generate a random string using crypto
+  const randomBytes = crypto.randomBytes(8).toString('hex'); // Generates 16 characters of random hex (8 bytes)
+
+  // Combine the random bytes with the timestamp to create a unique transaction ID
+  const transactionId = `txn_${randomBytes}`;
+
+  return transactionId;
+}
 
 const createReverseShipping = async (req, res) => {
   const { orderIds } = req.body; // Check if it's bulk shipping and include orders in the request
@@ -356,21 +402,25 @@ const getUserShipments = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // Check if the user exists or is authorized to view shipments
+    // Validate userId
     if (!userId) {
       return res.status(400).json({ message: "User ID is missing or invalid" });
     }
 
-    const response = await Shipping.find({ userId }).sort({ updatedAt: -1 });
+    // Fetch shipments and populate order details
+    const shipments = await Shipping.find({ userId })
+      .sort({ updatedAt: -1 })
+      .populate({
+        path: "orderIds", // Populate order details
+        model: "Order",
+      });
 
-    // If no shipments found, return a 404 status
-    if (!response || response.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No shipments found for this user" });
+    // If no shipments found
+    if (!shipments || shipments.length === 0) {
+      return res.status(404).json({ message: "No shipments found for this user" });
     }
-    console.log(response);
-    res.status(200).json(response);
+
+    res.status(200).json(shipments);
   } catch (error) {
     console.error("Error in getUserShipments:", error.message);
     return res.status(500).json({

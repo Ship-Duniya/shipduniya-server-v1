@@ -1,5 +1,6 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const shortid = require("shortid"); // For generating short receipt IDs
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
 
@@ -9,13 +10,19 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-// Create payment
+// Create a new payment order
 const createPayment = async (req, res) => {
   try {
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
     const order = await razorpay.orders.create({
-      amount: req.body.amount * 100, // Amount in paise
+      amount: amount * 100, // Convert to paise
       currency: "INR",
-      receipt: `receipt_${Date.now()}`,
+      receipt: `rcpt_${shortid.generate()}`, // Ensure receipt is within 40 chars
     });
 
     if (!order) {
@@ -29,7 +36,7 @@ const createPayment = async (req, res) => {
   }
 };
 
-// Verify payment signature
+// Verify Razorpay payment signature
 const verifyPayment = async (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
     req.body;
@@ -55,7 +62,7 @@ const verifyPayment = async (req, res) => {
   }
 };
 
-// Create transaction details
+// Create a transaction record after successful payment
 const createTransactionDetails = async (req, res) => {
   const { id } = req.user; // Authenticated user ID
   const { orderId, paymentId, amount, currency, description } = req.body;
@@ -66,29 +73,26 @@ const createTransactionDetails = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Use the current wallet balance as the transaction amount
-    const walletAmount = user.wallet;
+    // Add amount to user's wallet balance
+    const newBalance = user.wallet + amount;
 
-    // Add the amount to the user's wallet balance
-    const newBalance = walletAmount + amount;
-
-    // Create the new transaction
+    // Create the transaction record
     const newTransaction = new Transaction({
       userId: id,
-      orderId, // Store Razorpay order ID
-      paymentId, // Store Razorpay payment ID
-      transactionId: paymentId, // Storing the Razorpay transaction ID
-      amount: walletAmount, // Use the user's wallet balance as the transaction amount
+      orderId,
+      paymentId,
+      transactionId: paymentId,
+      amount, // Corrected amount to reflect the actual transaction
       currency,
-      type: ["wallet"], // Transaction type is always 'wallet'
+      type: "wallet",
       description,
       balance: newBalance,
       status: "success",
-      metadata: { additionalInfo: description }, // Store extra info
+      metadata: { additionalInfo: description },
     });
 
     // Update the user's wallet balance
-    user.wallet = newBalance; // Update the user's wallet with the new balance
+    user.wallet = newBalance;
     await user.save();
 
     // Save the transaction to the database
