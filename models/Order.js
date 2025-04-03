@@ -95,7 +95,15 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "in-transit", "delivered", "rto", "lost", "cancelled","ndr"],
+      enum: [
+        "pending",
+        "in-transit",
+        "delivered",
+        "rto",
+        "lost",
+        "cancelled",
+        "ndr",
+      ],
       default: "pending",
     },
     partner: {
