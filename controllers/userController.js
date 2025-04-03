@@ -19,45 +19,59 @@ const twilioClient = twilio(
 );
 
 const sendPhoneOtp = async (req, res) => {
-  const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
-  const phoneNumber = req.body.phone;
-
-  // Store OTP in the database
-  await OtpModel.updateOne(
-    { phone: phoneNumber, type: "phone" }, 
-    { otp, verified: false, createdAt: new Date() }, 
-    { upsert: true } // Create a new record if it doesn't exist
-  );
-
-  const options = {
-    method: "POST",
-    url: "https://www.fast2sms.com/dev/bulkV2",
-    headers: {
-      authorization: "7yHfa4W3jQUtzpoCCGbLSkhoZGXEir0vQh5ARSodqsbCuAD3dXlG3Y6DAA91",
-      "Content-Type": "application/json",
-    },
-    data: {
-      message: `Welcome to Shipduniya...!! Your SignUp OTP code is ${otp}`,
-      language: "english",
-      route: "q",
-      numbers: phoneNumber,
-    },
-  };
-
   try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ success: false, message: "Phone number is required." });
+
+    // Check if phone number is already registered
+    const existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "Phone number already registered." });
+    }
+
+    const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
+
+    // Store OTP in the database
+    await OtpModel.updateOne(
+      { phone, type: "phone" },
+      { otp, verified: false, createdAt: new Date() },
+      { upsert: true }
+    );
+
+    const options = {
+      method: "POST",
+      url: "https://www.fast2sms.com/dev/bulkV2",
+      headers: {
+        authorization: process.env.FAST2SMS_API_KEY, // Store API key in env file
+        "Content-Type": "application/json",
+      },
+      data: {
+        message: `Welcome to Shipduniya...!! Your SignUp OTP code is ${otp}`,
+        language: "english",
+        route: "q",
+        numbers: phone,
+      },
+    };
+
     const response = await axios.request(options);
     console.log("OTP sent successfully:", response.data);
-    res.status(200).json({ success: true, message: "OTP sent successfully" });
+    res.status(200).json({ success: true, message: "OTP sent successfully." });
   } catch (error) {
     console.error("Error sending OTP:", error.response ? error.response.data : error.message);
-    res.status(500).json({ success: false, message: "Failed to send OTP" });
+    res.status(500).json({ success: false, message: "Failed to send OTP." });
   }
 };
 
 const sendEmailOtp = async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required." });
+    if (!email) return res.status(400).json({ success: false, message: "Email is required." });
+
+    // Check if email is already registered
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "Email ID already registered." });
+    }
 
     const emailOtp = Math.floor(1000 + Math.random() * 9000);
     console.log(`Email OTP: ${emailOtp}`);
@@ -65,13 +79,7 @@ const sendEmailOtp = async (req, res) => {
     // Save OTP in the database
     await OtpModel.findOneAndUpdate(
       { email, type: "email" },
-      {
-        email,
-        otp: emailOtp,
-        type: "email",
-        verified: false,
-        createdAt: new Date(),
-      },
+      { email, otp: emailOtp, type: "email", verified: false, createdAt: new Date() },
       { upsert: true, new: true }
     );
 
@@ -91,10 +99,10 @@ const sendEmailOtp = async (req, res) => {
       text: `Welcome to Shipduniya!!\nYour OTP for email verification is ${emailOtp}. It expires in 10 minutes.`,
     });
 
-    res.status(200).json({ message: "Email OTP sent successfully." });
+    res.status(200).json({ success: true, message: "Email OTP sent successfully." });
   } catch (error) {
     console.error("Error sending email OTP:", error);
-    res.status(500).json({ message: "Error sending OTP. Try again later." });
+    res.status(500).json({ success: false, message: "Error sending OTP. Try again later." });
   }
 };
 
