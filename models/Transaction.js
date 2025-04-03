@@ -8,8 +8,8 @@ const transactionSchema = new mongoose.Schema(
       required: true,
     },
     type: {
-      type: [String], // Array of strings to allow multiple types
-      enum: ["wallet", "shipping", "weight_reconciliation"],
+      type: [String],
+      enum: ["wallet", "shipping", "weight_reconciliation", "refund"],
       default: "wallet",
       required: true,
     },
@@ -22,10 +22,10 @@ const transactionSchema = new mongoose.Schema(
       default: "INR",
     },
     balance: {
-      type: Number, // Track wallet balance after the transaction
+      type: Number,
     },
     description: {
-      type: String, // Provide details like "Wallet top-up", "Shipping charge", etc.
+      type: String,
     },
     status: {
       type: String,
@@ -33,7 +33,7 @@ const transactionSchema = new mongoose.Schema(
       default: "pending",
     },
     transactionId: {
-      type: String, // Razorpay transaction ID or custom transaction ID
+      type: String,
       required: false,
     },
     paymentId: {
