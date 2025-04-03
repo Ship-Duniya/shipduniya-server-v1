@@ -40,11 +40,13 @@ const transactionSchema = new mongoose.Schema(
       type: String, // Payment ID for external payment systems
       required: false,
     },
-    awbNumber: { // Add the AWB number here
+    awbNumber: {
+      // Add the AWB number here
       type: String,
       required: false,
     },
-    shipmentId: { // Add the shipment ID here
+    shipmentId: {
+      // Add the shipment ID here
       type: String,
       required: false,
     },
