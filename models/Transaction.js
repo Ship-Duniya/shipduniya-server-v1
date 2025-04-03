@@ -37,16 +37,14 @@ const transactionSchema = new mongoose.Schema(
       required: false,
     },
     paymentId: {
-      type: String, // Payment ID for external payment systems
+      type: String,
       required: false,
     },
     awbNumber: {
-      // Add the AWB number here
       type: String,
       required: false,
     },
     shipmentId: {
-      // Add the shipment ID here
       type: String,
       required: false,
     },
