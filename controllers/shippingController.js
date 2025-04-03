@@ -206,7 +206,9 @@ const createForwardShipping = async (req, res) => {
       amount: totalShippingCost,
       currency: "INR",
       balance: user.wallet,
-      description: `Shipping charges deducted for orders: ${processedOrders.join(", ")}`,
+      description: `Shipping charges deducted for orders: ${processedOrders.join(
+        ", "
+      )}`,
       status: "success",
       transactionId: transactionId,
       shippingDetails: shippingRecords, // Store all shipping AWB and Shipment IDs
@@ -230,7 +232,7 @@ const createForwardShipping = async (req, res) => {
 
 function generateTransactionId() {
   // Generate a random string using crypto
-  const randomBytes = crypto.randomBytes(8).toString('hex'); // Generates 16 characters of random hex (8 bytes)
+  const randomBytes = crypto.randomBytes(8).toString("hex"); // Generates 16 characters of random hex (8 bytes)
 
   // Combine the random bytes with the timestamp to create a unique transaction ID
   const transactionId = `txn_${randomBytes}`;
@@ -417,7 +419,9 @@ const getUserShipments = async (req, res) => {
 
     // If no shipments found
     if (!shipments || shipments.length === 0) {
-      return res.status(404).json({ message: "No shipments found for this user" });
+      return res
+        .status(404)
+        .json({ message: "No shipments found for this user" });
     }
 
     res.status(200).json(shipments);
@@ -1565,6 +1569,71 @@ const fetchUserRTCShipments = async (req, res) => {
   }
 };
 
+const cancelShipping = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { shippingId } = req.body;
+
+    // Find the shipping entry
+    const shipping = await Shipping.findById(shippingId);
+    if (!shipping) {
+      return res.status(404).json({ message: "Shipping record not found" });
+    }
+
+    // Ensure the shipping is in "pending" status
+    if (shipping.status !== "pending") {
+      return res
+        .status(400)
+        .json({ message: "Only pending shipments can be canceled" });
+    }
+
+    // Fetch user details
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Refund amount to wallet
+    const refundAmount = shipping.partnerDetails.charges;
+    user.wallet += refundAmount;
+    await user.save();
+
+    // Create refund transaction
+    const transaction = await Transaction.create({
+      userId: user._id,
+      type: ["wallet", "refund"],
+      amount: refundAmount,
+      currency: "INR",
+      balance: user.wallet,
+      description: `Shipping cancellation refund for orders: ${shipping.orderIds.join(
+        ", "
+      )}`,
+      status: "success",
+      transactionId: generateTransactionId(),
+    });
+
+    // Update the order status and remove shipping reference
+    await Order.updateMany(
+      { _id: { $in: shipping.orderIds } },
+      { $set: { shipped: false }, $unset: { shipping: 1 } }
+    );
+
+    // Delete the shipping record
+    await Shipping.findByIdAndDelete(shippingId);
+
+    res.json({
+      message: "Shipping canceled successfully, amount refunded",
+      refundedAmount: refundAmount,
+      transactionId: transaction._id,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Server error during shipping cancellation",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   // createShipping,
   createForwardShipping,
@@ -1589,4 +1658,5 @@ module.exports = {
   updateShipmentStatusToRTC,
   fetchUserRTOShipments,
   fetchUserRTCShipments,
+  cancelShipping,
 };

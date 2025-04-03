@@ -25,6 +25,7 @@ const {
   updateShipmentStatusToRTC,
   fetchUserRTCShipments,
   fetchUserRTOShipments,
+  cancelShipping,
   //   getShippingById,
   //   updateShipping,
   //   deleteShipping,
@@ -152,6 +153,13 @@ router.get(
   authMiddleware,
   roleMiddleware(["user"]),
   fetchUserRTCShipments
+);
+
+router.post(
+  "/cancel-shipping",
+  authMiddleware,
+  roleMiddleware(["user"]),
+  cancelShipping
 );
 
 // // Get a single shipping record by ID
