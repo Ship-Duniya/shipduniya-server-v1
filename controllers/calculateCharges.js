@@ -166,7 +166,7 @@ async function calculateCharges(req, res) {
     }
 
     // Process Delhivery charges
-    if (delhiveryCharges?.services) {
+    if (delhiveryCharges?.services?.length > 0) {
       const multiplier = getMultiplier("default");
       delhiveryCharges.services.forEach((service) => {
         const baseCod = service.cod_charge || 0;
@@ -182,7 +182,10 @@ async function calculateCharges(req, res) {
           otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
         });
       });
+    } else {
+      console.warn("Delhivery charges are empty or invalid:", delhiveryCharges);
     }
+    console.log("Charges Breakdown After Delhivery:", chargesBreakdown);
 
     // Process Ecom Express charges
     if (ecomCharges?.services) {
@@ -210,6 +213,8 @@ async function calculateCharges(req, res) {
           charge.carrierName.toLowerCase() === carrierName.toLowerCase()
       );
     }
+
+    console.log("Final Charges Breakdown:", chargesBreakdown);
 
     res.json({
       message: "Charges calculated successfully.",
@@ -426,19 +431,21 @@ async function getXpressbeesCharges(
   }
 }
 
-async function getDelhiveryCharges(
-  origin,
-  destination,
-  weight,
-  codAmount,
-  productType
-) {
+async function getDelhiveryCharges(origin, destination, weight, codAmount, productType) {
   try {
-    const paymentType = productType === "cod" ? "COD" : "Prepaid";
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?from_pincode=${origin}&to_pincode=${destination}&weight=${weight}&payment_type=${paymentType}&cod_amount=${
-      codAmount || 0
-    }`;
+    if (!origin || !destination) return null;
+    if (isNaN(weight) || weight <= 0) return null;
 
+    // Convert weight to grams as required by the API
+    const weightInGrams = Math.round(weight * 1000);
+
+    // Construct the API URL
+    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${origin}&d_pin=${destination}&cgm=${weightInGrams}`;
+
+    // Log the request details for debugging
+    console.log("Delhivery API Request URL:", url);
+
+    // Make the API request
     const response = await axios.get(url, {
       headers: {
         Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
@@ -447,12 +454,18 @@ async function getDelhiveryCharges(
       timeout: 5000,
     });
 
-    if (!response.data || !Array.isArray(response.data)) {
-      throw new Error("Invalid response format from Delhivery");
+    // Log the raw response for debugging
+    console.log("Delhivery API Response:", response.data);
+
+    // Validate the response structure
+    if (!response.data || !response.data.success || !response.data.services) {
+      console.error("❌ Invalid Delhivery response:", response.data);
+      return null;
     }
 
+    // Map the response data to match the expected structure
     return {
-      services: response.data.map((service) => ({
+      services: response.data.services.map((service) => ({
         name: service.service_type || "Delhivery Service",
         total_charges: service.total_amount || 0,
         cod_charge: service.charge_COD || 0,
@@ -460,7 +473,9 @@ async function getDelhiveryCharges(
       })),
     };
   } catch (error) {
-    console.error("Delhivery API error:", error.message);
+    // Log the error details for debugging
+    console.error("❌ Error fetching Delhivery charges:", error.message);
+    console.error("❌ Error Details:", error.response?.data || error);
     return null;
   }
 }
