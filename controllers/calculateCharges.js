@@ -458,7 +458,7 @@ async function getDelhiveryCharges(
     if (isNaN(weight) || weight <= 0) return null;
 
     // Convert weight to grams as required by the API
-    const weightInGrams = Math.round(weight * 1000);
+    const weightInGrams = Math.round(weight);
 
     // Construct the API URL
     const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${productType === 'cod' ? 'COD' : 'Pre-paid'}&cod=${codAmount}`;
@@ -541,7 +541,7 @@ async function getEcomCharges(
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        timeout: 10000,
+        timeout: 100000,
       }
     );
 
