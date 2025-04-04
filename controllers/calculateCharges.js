@@ -461,7 +461,7 @@ async function getDelhiveryCharges(
     const weightInGrams = Math.round(weight * 1000);
 
     // Construct the API URL
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${origin}&d_pin=${destination}&cgm=${weightInGrams}`;
+    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${productType === 'cod' ? 'COD' : 'Pre-paid'}&cod=${codAmount}`;
 
     // Log the request details for debugging
     console.log("Delhivery API Request URL:", url);
@@ -479,14 +479,14 @@ async function getDelhiveryCharges(
     console.log("Delhivery API Response:", response.data);
 
     // Validate the response structure
-    if (!response.data || !response.data.success || !response.data.services) {
+    if (!response.data || !Array.isArray(response.data)) {
       console.error("❌ Invalid Delhivery response:", response.data);
       return null;
     }
 
     // Map the response data to match the expected structure
     return {
-      services: response.data.services.map((service) => ({
+      services: response.data.map((service) => ({
         name: service.service_type || "Delhivery Service",
         total_charges: service.total_amount || 0,
         cod_charge: service.charge_COD || 0,
@@ -500,6 +500,7 @@ async function getDelhiveryCharges(
     return null;
   }
 }
+
 
 async function getEcomCharges(
   origin,
