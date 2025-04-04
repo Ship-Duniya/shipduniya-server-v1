@@ -42,7 +42,7 @@ async function calculateCharges(req, res) {
     }
 
     const customerType = userProfile.customerType.toLowerCase();
-    const multiplierMap = { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 };
+    const multiplierMap = { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 };
     const multiplier = multiplierMap[customerType] || 1;
 
     // Normalize product type for consistent comparison
@@ -142,24 +142,16 @@ async function calculateCharges(req, res) {
       });
     }
 
-    // Process Delhivery charges with enhanced logging
+    // Process Delhivery charges
     if (delhiveryCharges?.services) {
-      console.log("Processed Delhivery Services:", delhiveryCharges.services);
       delhiveryCharges.services.forEach((service) => {
-        const baseTotal = service.total_charges || 0;
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
-
-        console.log("Processing Delhivery Service:", {
-          baseTotal,
-          baseCod,
-          baseFreight,
-          multiplier,
-        });
+        const baseTotal = service.total_charges || 0;
 
         chargesBreakdown.push({
           carrierName: "Delhivery",
-          serviceType: service.name || "Standard",
+          serviceType: service.name,
           totalPrice: baseTotal * multiplier,
           codCharge: baseCod * multiplier,
           freightCharge: baseFreight * multiplier,
@@ -167,9 +159,9 @@ async function calculateCharges(req, res) {
         });
       });
     }
+
     // Process Ecom Express charges
     if (ecomCharges?.services) {
-      console.log("Processed Ecom Services:", ecomCharges.services);
       ecomCharges.services.forEach((service) => {
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
@@ -293,10 +285,12 @@ async function calculateShippingCharges(req, res) {
     });
   } catch (error) {
     console.error("Error calculating shipping charges:", error);
-    res.status(500).json({
-      message: "Error calculating shipping charges.",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        message: "Error calculating shipping charges.",
+        error: error.message,
+      });
   }
 }
 
@@ -409,7 +403,6 @@ async function getXpressbeesCharges(
   }
 }
 
-// Updated Delhivery API Helper
 async function getDelhiveryCharges(
   origin,
   destination,
@@ -418,10 +411,9 @@ async function getDelhiveryCharges(
   productType
 ) {
   try {
-    // Convert weight to grams for Delhivery API
     const weightInGrams = Math.round(weight * 1000);
     const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${origin}&d_pin=${destination}&cgm=${weightInGrams}&pt=${
-      productType === "cod" ? "COD" : "Prepaid"
+      productType === "cod" ? "COD" : "Pre-paid"
     }&cod=${productType === "cod" ? codAmount : 0}`;
 
     const response = await axios.get(url, {
@@ -432,34 +424,20 @@ async function getDelhiveryCharges(
       timeout: 5000,
     });
 
-    // Add debug logging
-    console.log(
-      "Delhivery API Processed Services:",
-      response.data.map((s) => ({
-        total: s.total_amount,
-        freight: s.charge_DL,
-        cod: s.charge_COD,
-      }))
-    );
-
     return {
       services: response.data.map((service) => ({
-        name: "Delhivery Standard",
+        name: service.service_type || "Delhivery Service",
         total_charges: service.total_amount || 0,
         cod_charge: service.charge_COD || 0,
         freight_charge: service.charge_DL || 0,
       })),
     };
   } catch (error) {
-    console.error(
-      "Delhivery API Error:",
-      error.response?.data || error.message
-    );
-    return { services: [] };
+    console.error("Delhivery API error:", error.message);
+    return null;
   }
 }
 
-// Updated Ecom Express API Helper
 async function getEcomCharges(
   origin,
   destination,
@@ -469,17 +447,17 @@ async function getEcomCharges(
 ) {
   try {
     const payload = {
-      origin_pincode: origin.toString(),
-      destination_pincode: destination.toString(),
-      payment_type: productType === "cod" ? "COD" : "PREPAID", // Uppercase required
-      weight: Math.max(0.5, parseFloat(weight)), // Ensure numeric weight
-      cod_amount: productType === "cod" ? parseFloat(codAmount) || 0 : 0,
+      orginPincode: origin,
+      destinationPincode: destination,
+      productType: productType === "cod" ? "cod" : "ppd",
+      chargeableWeight: Math.max(1, weight),
+      codAmount: productType === "cod" ? codAmount || 0 : 0,
     };
 
     const formData = new URLSearchParams();
     formData.append("username", process.env.ECOM_USERID);
     formData.append("password", process.env.ECOM_PASSWORD);
-    formData.append("json_input", JSON.stringify(payload));
+    formData.append("json_input", JSON.stringify([payload]));
 
     const response = await axios.post(
       "https://ratecard.ecomexpress.in/services/rateCalculatorAPI/",
@@ -490,32 +468,27 @@ async function getEcomCharges(
       }
     );
 
-    console.log("Ecom API Raw Response:", response.data);
-
-    if (response.data.error) {
-      throw new Error(response.data.error);
+    const ecomData = response.data[0];
+    if (!ecomData.success) {
+      throw new Error(ecomData.errors || "Ecom API error");
     }
 
     return {
       services: [
         {
           name: "Ecom Express",
-          total_charges: response.data.total_charge || 0,
-          cod_charge: response.data.COD || 0,
-          freight_charge: response.data.FRT || 0,
+          total_charges: ecomData.total_charge || 0,
+          cod_charge: ecomData.COD || 0,
+          freight_charge: ecomData.FRT || 0,
         },
       ],
     };
   } catch (error) {
-    console.error(
-      "Ecom Express API Error:",
-      error.response?.data || error.message
-    );
-    return { services: [] };
+    console.error("Ecom Express API error:", error.message);
+    return null;
   }
 }
 
-// Keep the rest of your existing code unchanged
 module.exports = {
   calculateCharges,
   calculateShippingCharges,

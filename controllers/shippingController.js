@@ -188,6 +188,7 @@ const createForwardShipping = async (req, res) => {
       }
     }
 
+    // Ensure the user has enough balance before deducting
     if (user.wallet < totalShippingCost) {
       return res.status(400).json({ message: "Insufficient wallet balance" });
     }
@@ -206,6 +207,7 @@ const createForwardShipping = async (req, res) => {
       amount: totalShippingCost,
       currency: "INR",
       balance: user.wallet,
+      transactionMode: "debit", // Marked as DEBIT since amount is deducted
       description: `Shipping charges deducted for orders: ${processedOrders.join(
         ", "
       )}`,
@@ -1601,15 +1603,18 @@ const cancelShipping = async (req, res) => {
     // Create refund transaction
     const transaction = await Transaction.create({
       userId: user._id,
-      type: ["wallet", "refund"],
+      type: ["wallet", "refund"], // Following schema type (array)
       amount: refundAmount,
       currency: "INR",
-      balance: user.wallet,
+      balance: user.wallet, // Updated wallet balance
       description: `Shipping cancellation refund for orders: ${shipping.orderIds.join(
         ", "
       )}`,
       status: "success",
+      transactionMode: "credit", // Since it's a refund
       transactionId: generateTransactionId(),
+      awbNumber: shipping.awbNumber, // Storing AWB if available
+      shipmentId: shipping.shipmentId, // Storing Shipment ID if available
     });
 
     // Update the order status and remove shipping reference
