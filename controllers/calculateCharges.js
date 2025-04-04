@@ -21,6 +21,9 @@ async function calculateCharges(req, res) {
     originPincode,
     destinationPincode,
     carrierName,
+    height = 10,
+    breadth = 10,
+    length = 10,
   } = req.body;
 
   try {
@@ -42,8 +45,15 @@ async function calculateCharges(req, res) {
     }
 
     const customerType = userProfile.customerType.toLowerCase();
-    const multiplierMap = { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 };
-    const multiplier = multiplierMap[customerType] || 1;
+    const multiplierMaps = {
+      xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
+      default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+    };
+
+    const getMultiplier = (carrier) =>
+      multiplierMaps[carrier]?.[customerType] ||
+      multiplierMaps.default[customerType] ||
+      1;
 
     // Normalize product type for consistent comparison
     const normalizedProductType = productType.toLowerCase();
@@ -64,6 +74,7 @@ async function calculateCharges(req, res) {
     // Process static rates from charge sheet
     for (const partner of partnerCharges) {
       if (chargeableWeight <= partner.chargeableWeight) {
+        const multiplier = getMultiplier(partner.carrierName.toLowerCase());
         const freightCharge = partner.freight * chargeableWeight;
         const codCharge =
           normalizedProductType === "cod"
@@ -75,9 +86,9 @@ async function calculateCharges(req, res) {
           carrierName: partner.carrierName,
           serviceType: partner.serviceType || "Standard",
           totalPrice: total,
-          codCharge: codCharge,
-          freightCharge: freightCharge,
-          otherCharges: total - freightCharge - codCharge,
+          codCharge: codCharge * multiplier,
+          freightCharge: freightCharge * multiplier,
+          otherCharges: (total - freightCharge - codCharge) * multiplier,
         });
       }
     }
@@ -92,7 +103,10 @@ async function calculateCharges(req, res) {
           destinationPincode,
           chargeableWeight,
           CODAmount,
-          normalizedProductType
+          normalizedProductType,
+          height,
+          breadth,
+          length
         )
       );
     }
@@ -126,6 +140,8 @@ async function calculateCharges(req, res) {
 
     // Process Xpressbees charges
     if (xpressbeesCharges?.services) {
+      const multiplier = getMultiplier("xpressbees");
+      if(xpressbeesCharges.services && xpressbeesCharges.services.length > 0){
       xpressbeesCharges.services.forEach((service) => {
         const baseCod = service.cod_charges || 0;
         const baseFreight = service.freight_charges || 0;
@@ -140,10 +156,18 @@ async function calculateCharges(req, res) {
           otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
         });
       });
+    } else {
+      console.log("Xpressbees not available:", {
+        origin: originPincode,
+        destination: destinationPincode,
+        message: xpressbeesCharges.message || xpressbeesCharges.error
+      });
+    }
     }
 
     // Process Delhivery charges
     if (delhiveryCharges?.services) {
+      const multiplier = getMultiplier("default");
       delhiveryCharges.services.forEach((service) => {
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
@@ -162,6 +186,7 @@ async function calculateCharges(req, res) {
 
     // Process Ecom Express charges
     if (ecomCharges?.services) {
+      const multiplier = getMultiplier("default");
       ecomCharges.services.forEach((service) => {
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
@@ -285,12 +310,10 @@ async function calculateShippingCharges(req, res) {
     });
   } catch (error) {
     console.error("Error calculating shipping charges:", error);
-    res
-      .status(500)
-      .json({
-        message: "Error calculating shipping charges.",
-        error: error.message,
-      });
+    res.status(500).json({
+      message: "Error calculating shipping charges.",
+      error: error.message,
+    });
   }
 }
 
@@ -411,10 +434,10 @@ async function getDelhiveryCharges(
   productType
 ) {
   try {
-    const weightInGrams = weight;
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${origin}&d_pin=${destination}&cgm=${weightInGrams}&pt=${
-      productType === "cod" ? "COD" : "Pre-paid"
-    }&cod=${productType === "cod" ? codAmount : 0}`;
+    const paymentType = productType === "cod" ? "COD" : "Prepaid";
+    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?from_pincode=${origin}&to_pincode=${destination}&weight=${weight}&payment_type=${paymentType}&cod_amount=${
+      codAmount || 0
+    }`;
 
     const response = await axios.get(url, {
       headers: {
@@ -423,6 +446,10 @@ async function getDelhiveryCharges(
       },
       timeout: 5000,
     });
+
+    if (!response.data || !Array.isArray(response.data)) {
+      throw new Error("Invalid response format from Delhivery");
+    }
 
     return {
       services: response.data.map((service) => ({
@@ -447,10 +474,10 @@ async function getEcomCharges(
 ) {
   try {
     const payload = {
-      orginPincode: origin,
+      originPincode: origin,
       destinationPincode: destination,
       productType: productType === "cod" ? "cod" : "ppd",
-      chargeableWeight: Math.max(1, weight),
+      chargeableWeight: Math.max(0.5, weight), // Minimum 0.5kg as per Ecom policy
       codAmount: productType === "cod" ? codAmount || 0 : 0,
     };
 
@@ -469,8 +496,8 @@ async function getEcomCharges(
     );
 
     const ecomData = response.data[0];
-    if (!ecomData.success) {
-      throw new Error(ecomData.errors || "Ecom API error");
+    if (!ecomData || ecomData.success === false) {
+      throw new Error(ecomData?.errors || "Ecom API error");
     }
 
     return {
