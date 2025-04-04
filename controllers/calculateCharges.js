@@ -367,7 +367,7 @@ async function getXpressbeesCharges(
       origin: origin.toString(),
       destination: destination.toString(),
       payment_type: productType === "cod" ? "cod" : "prepaid",
-      weight: Math.round(weight * 1000), // Convert kg to grams
+      weight: weight,
       length: 10,
       breadth: 10,
       height: 10,
@@ -411,7 +411,7 @@ async function getDelhiveryCharges(
   productType
 ) {
   try {
-    const weightInGrams = Math.round(weight * 1000);
+    const weightInGrams = weight;
     const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&o_pin=${origin}&d_pin=${destination}&cgm=${weightInGrams}&pt=${
       productType === "cod" ? "COD" : "Pre-paid"
     }&cod=${productType === "cod" ? codAmount : 0}`;
