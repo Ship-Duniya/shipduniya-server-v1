@@ -73,7 +73,7 @@ const createTransactionDetails = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Add amount to user's wallet balance
+    // Always credit the wallet upon successful payment
     const newBalance = user.wallet + amount;
 
     // Create the transaction record
@@ -82,12 +82,13 @@ const createTransactionDetails = async (req, res) => {
       orderId,
       paymentId,
       transactionId: paymentId,
-      amount, // Corrected amount to reflect the actual transaction
+      amount,
       currency,
       type: "wallet",
       description,
       balance: newBalance,
       status: "success",
+      transactionMode: "credit", // Always credit for wallet recharge
       metadata: { additionalInfo: description },
     });
 
@@ -99,7 +100,7 @@ const createTransactionDetails = async (req, res) => {
     await newTransaction.save();
 
     res.status(201).json({
-      message: "Transaction created successfully",
+      message: "Wallet recharged successfully",
       transaction: newTransaction,
     });
   } catch (error) {
