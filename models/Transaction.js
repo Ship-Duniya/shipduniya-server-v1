@@ -32,19 +32,26 @@ const transactionSchema = new mongoose.Schema(
       enum: ["pending", "success", "rejected"],
       default: "pending",
     },
+    transactionMode: {
+      type: String,
+      enum: ["debit", "credit"],
+      required: true,
+    },
     transactionId: {
       type: String,
       required: false,
     },
     paymentId: {
-      type: String,
+      type: String, // Payment ID for external payment systems
       required: false,
     },
     awbNumber: {
+      // Add the AWB number here
       type: String,
       required: false,
     },
     shipmentId: {
+      // Add the shipment ID here
       type: String,
       required: false,
     },
