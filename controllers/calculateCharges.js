@@ -446,13 +446,7 @@ async function getXpressbeesCharges(
   }
 }
 
-async function getDelhiveryCharges(
-  origin,
-  destination,
-  weight,
-  codAmount,
-  productType
-) {
+async function getDelhiveryCharges(origin, destination, weight, codAmount, productType) {
   try {
     if (!origin || !destination) return null;
     if (isNaN(weight) || weight <= 0) return null;
@@ -460,38 +454,60 @@ async function getDelhiveryCharges(
     // Convert weight to grams as required by the API
     const weightInGrams = Math.round(weight);
 
-    // Construct the API URL
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${productType === 'cod' ? 'COD' : 'Pre-paid'}&cod=${codAmount}`;
+    // Construct the API URLs for md=E and md=S
+    const urlE = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${
+      productType === "cod" ? "COD" : "Pre-paid"
+    }&cod=${codAmount}`;
 
-    // Log the request details for debugging
-    console.log("Delhivery API Request URL:", url);
+    const urlS = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=S&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${
+      productType === "cod" ? "COD" : "Pre-paid"
+    }&cod=${codAmount}`;
 
-    // Make the API request
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      timeout: 5000,
-    });
+    // Log the request URLs for debugging
+    console.log("Delhivery API Request URLs:", { urlE, urlS });
 
-    // Log the raw response for debugging
-    console.log("Delhivery API Response:", response.data);
+    // Make both API requests in parallel
+    const [responseE, responseS] = await Promise.all([
+      axios.get(urlE, {
+        headers: {
+          Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 5000,
+      }),
+      axios.get(urlS, {
+        headers: {
+          Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 5000,
+      }),
+    ]);
 
-    // Validate the response structure
-    if (!response.data || !Array.isArray(response.data)) {
-      console.error("❌ Invalid Delhivery response:", response.data);
-      return null;
-    }
+    // Log the raw responses for debugging
+    console.log("Delhivery API Response for md=E:", responseE.data);
+    console.log("Delhivery API Response for md=S:", responseS.data);
 
-    // Map the response data to match the expected structure
+    // Validate and process the responses
+    const servicesE = responseE.data?.map((service) => ({
+      name: service.service_type || "Delhivery Service (E)",
+      total_charges: service.total_amount || 0,
+      cod_charge: service.charge_COD || 0,
+      freight_charge: service.charge_DL || 0,
+    })) || [];
+
+    const servicesS = responseS.data?.map((service) => ({
+      name: service.service_type || "Delhivery Service (S)",
+      total_charges: service.total_amount || 0,
+      cod_charge: service.charge_COD || 0,
+      freight_charge: service.charge_DL || 0,
+    })) || [];
+
+    // Combine the services from both responses
+    const combinedServices = [...servicesE, ...servicesS];
+
     return {
-      services: response.data.map((service) => ({
-        name: service.service_type || "Delhivery Service",
-        total_charges: service.total_amount || 0,
-        cod_charge: service.charge_COD || 0,
-        freight_charge: service.charge_DL || 0,
-      })),
+      services: combinedServices,
     };
   } catch (error) {
     // Log the error details for debugging
@@ -500,7 +516,6 @@ async function getDelhiveryCharges(
     return null;
   }
 }
-
 
 async function getEcomCharges(
   origin,
@@ -511,7 +526,7 @@ async function getEcomCharges(
 ) {
   try {
     // Convert weight to number and handle minimum weight
-    const numericWeight = Math.max(0.5, parseFloat(weight/1000));
+    const numericWeight = Math.max(0.5, parseFloat(weight / 1000));
 
     const payload = {
       orginPincode: origin.toString(), // Note the API's spelling
