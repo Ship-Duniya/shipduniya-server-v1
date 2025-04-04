@@ -255,8 +255,21 @@ async function calculateShippingCharges(req, res) {
     }
 
     const customerType = userProfile.customerType.toLowerCase();
-    const multiplierMap = { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 };
-    const multiplier = multiplierMap[customerType] || 1;
+    const multiplierMaps = {
+      xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
+      delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+      ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+      default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+    };
+
+    const getMultiplier = (carrier) => {
+      const carrierKey = carrier.toLowerCase();
+      return (
+        multiplierMaps[carrierKey]?.[customerType] ||
+        multiplierMaps.default[customerType] ||
+        1
+      );
+    };
 
     let originPincode;
     if (pickUpWareHouse === "Ship Duniya") {
@@ -277,7 +290,12 @@ async function calculateShippingCharges(req, res) {
         .json({ message: "Could not determine origin pincode." });
     }
 
-    const requestedCarrier = carrierName.toLowerCase().trim();
+    // Normalize carrier name for Ecom Express
+    let requestedCarrier = carrierName?.toLowerCase().trim();
+    if (requestedCarrier === "ecom express") {
+      requestedCarrier = "ecom";
+    }
+
     const uniqueServices = new Map();
 
     for (const orderId of orderIds) {
@@ -293,15 +311,17 @@ async function calculateShippingCharges(req, res) {
         breadth,
         length,
       } = orderDetails;
+
       if (!destinationPincode || isNaN(chargeableWeight)) continue;
 
+      // Fetch carrier charges based on the order type (COD or prepaid)
       const carrierResponse = await getCarrierCharges(
         requestedCarrier,
         originPincode,
         destinationPincode,
         chargeableWeight,
         CODAmount,
-        productType,
+        productType, // Pass the normalized product type
         height,
         breadth,
         length
@@ -309,12 +329,29 @@ async function calculateShippingCharges(req, res) {
 
       if (carrierResponse?.services) {
         carrierResponse.services.forEach((service) => {
-          const serviceKey = `${service.name}|${service.total_charges}`;
+          const multiplier = getMultiplier(requestedCarrier);
+          const baseTotal = service.total_charges || 0;
+          const baseCod = service.cod_charge || 0;
+          const baseFreight = service.freight_charge || 0;
+          const otherCharges = baseTotal - baseCod - baseFreight;
+
+          const totalPrice = baseTotal * multiplier;
+          const codCharge = baseCod * multiplier;
+          const freightCharge = baseFreight * multiplier;
+          const otherChargesTotal = otherCharges * multiplier;
+
+          const serviceKey = `${service.name}|${totalPrice.toFixed(2)}`;
+
           if (!uniqueServices.has(serviceKey)) {
             uniqueServices.set(serviceKey, {
-              carrierName: requestedCarrier,
+              carrierName:
+                requestedCarrier.charAt(0).toUpperCase() +
+                requestedCarrier.slice(1), // Capitalize first letter
               serviceType: service.name,
-              totalPrice: (service.total_charges || 0) * multiplier,
+              totalPrice: totalPrice,
+              codCharge: codCharge,
+              freightCharge: freightCharge,
+              otherCharges: otherChargesTotal,
             });
           }
         });
@@ -324,6 +361,7 @@ async function calculateShippingCharges(req, res) {
     const chargesBreakdown = Array.from(uniqueServices.values()).sort(
       (a, b) => a.totalPrice - b.totalPrice
     );
+
     res.json({
       message: "Shipping charges calculated successfully.",
       charges: chargesBreakdown,
@@ -343,9 +381,9 @@ async function fetchOrderDetails(orderId) {
   return {
     chargeableWeight:
       parseFloat(order.volumetricWeight) || parseFloat(order.actualWeight),
-    CODAmount: order.collectableValue,
+    CODAmount: parseFloat(order.collectableValue) || 0,
     pincode: order.pincode,
-    productType: order.type,
+    productType: order.orderType.toLowerCase(), // Include orderType
     height: order.height,
     breadth: order.breadth,
     length: order.length,
