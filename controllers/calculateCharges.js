@@ -47,6 +47,8 @@ async function calculateCharges(req, res) {
     const customerType = userProfile.customerType.toLowerCase();
     const multiplierMaps = {
       xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
+      delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+      ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
       default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
     };
 
@@ -73,6 +75,14 @@ async function calculateCharges(req, res) {
 
     // Process static rates from charge sheet
     for (const partner of partnerCharges) {
+      // Skip if carrierName is specified and doesn't match
+      if (
+        carrierName &&
+        partner.carrierName.toLowerCase() !== carrierName.toLowerCase()
+      ) {
+        continue;
+      }
+
       if (chargeableWeight <= partner.chargeableWeight) {
         const multiplier = getMultiplier(partner.carrierName.toLowerCase());
         const freightCharge = partner.freight * chargeableWeight;
@@ -93,47 +103,45 @@ async function calculateCharges(req, res) {
       }
     }
 
-    // Fetch dynamic rates from carrier APIs
-    const apiPromises = [];
+    // Fetch dynamic rates from carrier APIs (fixed order)
+    const apiPromises = [
+      // Xpressbees promise
+      !carrierName || carrierName.toLowerCase() === "xpressbees"
+        ? getXpressbeesCharges(
+            originPincode,
+            destinationPincode,
+            chargeableWeight,
+            CODAmount,
+            normalizedProductType,
+            height,
+            breadth,
+            length
+          )
+        : Promise.resolve(null),
 
-    if (!carrierName || carrierName.toLowerCase() === "xpressbees") {
-      apiPromises.push(
-        getXpressbeesCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount,
-          normalizedProductType,
-          height,
-          breadth,
-          length
-        )
-      );
-    }
+      // Delhivery promise
+      !carrierName || carrierName.toLowerCase() === "delhivery"
+        ? getDelhiveryCharges(
+            originPincode,
+            destinationPincode,
+            chargeableWeight,
+            CODAmount,
+            normalizedProductType
+          )
+        : Promise.resolve(null),
 
-    if (!carrierName || carrierName.toLowerCase() === "delhivery") {
-      apiPromises.push(
-        getDelhiveryCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount,
-          normalizedProductType
-        )
-      );
-    }
-
-    if (!carrierName || carrierName.toLowerCase() === "ecom express") {
-      apiPromises.push(
-        getEcomCharges(
-          originPincode,
-          destinationPincode,
-          chargeableWeight,
-          CODAmount,
-          normalizedProductType
-        )
-      );
-    }
+      // Ecom promise (handles both "ecom" and "ecom express")
+      !carrierName ||
+      ["ecom", "ecom express"].includes(carrierName.toLowerCase())
+        ? getEcomCharges(
+            originPincode,
+            destinationPincode,
+            chargeableWeight,
+            CODAmount,
+            normalizedProductType
+          )
+        : Promise.resolve(null),
+    ];
 
     const [xpressbeesCharges, delhiveryCharges, ecomCharges] =
       await Promise.all(apiPromises);
@@ -141,7 +149,6 @@ async function calculateCharges(req, res) {
     // Process Xpressbees charges
     if (xpressbeesCharges?.services) {
       const multiplier = getMultiplier("xpressbees");
-      if(xpressbeesCharges.services && xpressbeesCharges.services.length > 0){
       xpressbeesCharges.services.forEach((service) => {
         const baseCod = service.cod_charges || 0;
         const baseFreight = service.freight_charges || 0;
@@ -156,18 +163,11 @@ async function calculateCharges(req, res) {
           otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
         });
       });
-    } else {
-      console.log("Xpressbees not available:", {
-        origin: originPincode,
-        destination: destinationPincode,
-        message: xpressbeesCharges.message || xpressbeesCharges.error
-      });
-    }
     }
 
     // Process Delhivery charges
-    if (delhiveryCharges?.services?.length > 0) {
-      const multiplier = getMultiplier("default");
+    if (delhiveryCharges?.services) {
+      const multiplier = getMultiplier("delhivery");
       delhiveryCharges.services.forEach((service) => {
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
@@ -182,46 +182,61 @@ async function calculateCharges(req, res) {
           otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
         });
       });
-    } else {
-      console.warn("Delhivery charges are empty or invalid:", delhiveryCharges);
     }
-    console.log("Charges Breakdown After Delhivery:", chargesBreakdown);
 
+    // Process Ecom charges with enhanced logging
     // Process Ecom Express charges
     if (ecomCharges?.services) {
-      const multiplier = getMultiplier("default");
+      const multiplier = getMultiplier("ecom");
+      console.log(
+        "Processing Ecom charges with multiplier:",
+        multiplier,
+        "for customer type:",
+        customerType
+      );
+
       ecomCharges.services.forEach((service) => {
+        const baseTotal = service.total_charges || 0;
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
-        const baseTotal = service.total_charges || 0;
 
-        chargesBreakdown.push({
-          carrierName: "Ecom Express",
+        const charge = {
+          carrierName: "Ecom",
           serviceType: service.name,
           totalPrice: baseTotal * multiplier,
           codCharge: baseCod * multiplier,
           freightCharge: baseFreight * multiplier,
           otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
-        });
+        };
+
+        console.log("Adding Ecom charge:", charge);
+        chargesBreakdown.push(charge);
       });
     }
 
-    // Filter by carrier if specified
+    // Filter by carrier if specified (case insensitive)
     if (carrierName) {
+      const targetCarrier = carrierName.toLowerCase();
       chargesBreakdown = chargesBreakdown.filter(
-        (charge) =>
-          charge.carrierName.toLowerCase() === carrierName.toLowerCase()
+        (charge) => charge.carrierName.toLowerCase() === targetCarrier
       );
     }
 
-    console.log("Final Charges Breakdown:", chargesBreakdown);
+    console.log(
+      "Final Charges Breakdown:",
+      JSON.stringify(chargesBreakdown, null, 2)
+    );
 
     res.json({
       message: "Charges calculated successfully.",
       charges: chargesBreakdown,
     });
   } catch (error) {
-    console.error("Error calculating charges:", error);
+    console.error("Error calculating charges:", {
+      message: error.message,
+      stack: error.stack,
+      requestBody: req.body,
+    });
     res.status(500).json({
       message: "Error calculating charges.",
       error: error.message,
@@ -431,7 +446,13 @@ async function getXpressbeesCharges(
   }
 }
 
-async function getDelhiveryCharges(origin, destination, weight, codAmount, productType) {
+async function getDelhiveryCharges(
+  origin,
+  destination,
+  weight,
+  codAmount,
+  productType
+) {
   try {
     if (!origin || !destination) return null;
     if (isNaN(weight) || weight <= 0) return null;
@@ -488,45 +509,88 @@ async function getEcomCharges(
   productType
 ) {
   try {
+    // Convert weight to number and handle minimum weight
+    const numericWeight = Math.max(0.5, parseFloat(weight/1000));
+
     const payload = {
-      originPincode: origin,
-      destinationPincode: destination,
+      orginPincode: origin.toString(), // Note the API's spelling
+      destinationPincode: destination.toString(),
       productType: productType === "cod" ? "cod" : "ppd",
-      chargeableWeight: Math.max(0.5, weight), // Minimum 0.5kg as per Ecom policy
-      codAmount: productType === "cod" ? codAmount || 0 : 0,
+      chargeableWeight: numericWeight,
+      codAmount: productType === "cod" ? parseFloat(codAmount) || 0 : 0,
     };
 
     const formData = new URLSearchParams();
-    formData.append("username", process.env.ECOM_USERID);
-    formData.append("password", process.env.ECOM_PASSWORD);
+    formData.append(
+      "username",
+      process.env.ECOM_USERID || "SHIPDARTLOGISTIC-BA333267"
+    );
+    formData.append("password", process.env.ECOM_PASSWORD || "3PIXOLLg3t");
     formData.append("json_input", JSON.stringify([payload]));
+
+    console.log("Ecom API Request:", {
+      url: "https://ratecard.ecomexpress.in/services/rateCalculatorAPI/",
+      payload: payload,
+    });
 
     const response = await axios.post(
       "https://ratecard.ecomexpress.in/services/rateCalculatorAPI/",
       formData,
       {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        timeout: 5000,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        timeout: 10000,
       }
     );
 
-    const ecomData = response.data[0];
-    if (!ecomData || ecomData.success === false) {
-      throw new Error(ecomData?.errors || "Ecom API error");
+    // Handle empty or invalid responses
+    if (!Array.isArray(response.data) || response.data.length === 0) {
+      console.error("Ecom API Error: Empty response array");
+      return null;
     }
 
-    return {
-      services: [
-        {
-          name: "Ecom Express",
-          total_charges: ecomData.total_charge || 0,
-          cod_charge: ecomData.COD || 0,
-          freight_charge: ecomData.FRT || 0,
-        },
-      ],
+    const ecomData = response.data[0];
+
+    if (!ecomData || ecomData.success === false) {
+      const errorMsg = ecomData?.errors
+        ? Array.isArray(ecomData.errors)
+          ? ecomData.errors.join(", ")
+          : ecomData.errors
+        : "Unknown Ecom API error";
+      console.error("Ecom API Error:", errorMsg);
+      return null;
+    }
+
+    // Extract charges from response
+    const charges = ecomData.chargesBreakup || {};
+    const service = {
+      name: "Ecom Express",
+      total_charges: parseFloat(charges.total_charge) || 0,
+      cod_charge: parseFloat(charges.COD) || 0,
+      freight_charge: parseFloat(charges.FRT) || 0,
     };
+
+    console.log("Ecom API Success:", service);
+    return { services: [service] };
   } catch (error) {
-    console.error("Ecom Express API error:", error.message);
+    // Improved error logging
+    const errorDetails = {
+      message: error.message,
+      config: {
+        url: error.config?.url,
+        method: error.config?.method,
+        data: error.config?.data,
+      },
+      response: {
+        status: error.response?.status,
+        data: error.response?.data,
+      },
+    };
+    console.error(
+      "Ecom Express API Error Details:",
+      JSON.stringify(errorDetails, null, 2)
+    );
     return null;
   }
 }
