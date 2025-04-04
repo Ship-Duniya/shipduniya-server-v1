@@ -12,6 +12,19 @@ const createForwardOrder = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
+    const validateOrder = (order) => {
+      const errors = [];
+      if (!/^\d{6}$/.test(order.pincode)) errors.push("Invalid pincode. Must be a 6-digit number.");
+      if (!/^\d{10}$/.test(order.mobile)) errors.push("Invalid mobile number. Must be a 10-digit number.");
+      if (order.telephone && !/^\d{10}$/.test(order.telephone)) errors.push("Invalid telephone number. Must be a 10-digit number.");
+      if (order.declaredValue <= 0) errors.push("Declared value must be greater than 0.");
+      if (order.collectableValue > order.declaredValue) errors.push("Collectable value cannot be greater than declared value.");
+      if (order.orderType === "PREPAID" && order.collectableValue > 0) errors.push("Collectable value must be 0 for prepaid orders.");
+      if (order.height <= 0 || order.length <= 0 || order.breadth <= 0) errors.push("Dimensions must be greater than 0.");
+      if (order.actualWeight <= 0) errors.push("Actual weight must be greater than 0.");
+      return errors;
+    };
+
     if (req.file) {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(req.file.buffer);
@@ -20,9 +33,7 @@ const createForwardOrder = async (req, res) => {
 
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber > 1) {
-          // Skip header row
-          sheetData.push({
-            // Corrected column mapping based on your Excel structure
+          const order = {
             consignee: row.getCell(1).value,
             consigneeAddress1: row.getCell(2).value,
             consigneeAddress2: row.getCell(3).value,
@@ -30,8 +41,7 @@ const createForwardOrder = async (req, res) => {
             pincode: row.getCell(5).value,
             mobile: row.getCell(6).value || user.mobile,
             invoiceNumber:
-              row.getCell(7).value ||
-              `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              row.getCell(7).value || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             telephone: row.getCell(8).value || user.telephone,
             city: row.getCell(9).value,
             state: row.getCell(10).value,
@@ -45,39 +55,23 @@ const createForwardOrder = async (req, res) => {
             quantity: row.getCell(18).value || 1,
             volumetricWeight: row.getCell(19).value || 0,
             actualWeight: row.getCell(20).value,
-          });
+          };
+
+          const validationErrors = validateOrder(order);
+          if (validationErrors.length === 0) {
+            sheetData.push(order);
+          }
         }
       });
 
       if (sheetData.length === 0) {
-        return res
-          .status(400)
-          .json({ error: "Uploaded file is empty or invalid" });
+        return res.status(400).json({ error: "Uploaded file is empty or contains invalid data" });
       }
 
       const bulkOrders = sheetData.map((order) => ({
         userId: userId,
         orderId: `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        orderType: order.orderType,
-        consignee: order.consignee || user.name,
-        consigneeAddress1: order.consigneeAddress1,
-        consigneeAddress2: order.consigneeAddress2,
-        city: order.city,
-        state: order.state,
-        pincode: order.pincode,
-        telephone: order.telephone,
-        mobile: order.mobile,
-        collectableValue: order.collectableValue,
-        declaredValue: order.declaredValue,
-        itemDescription: order.itemDescription,
-        dgShipment: order.dgShipment,
-        quantity: order.quantity,
-        height: order.height,
-        breadth: order.breadth,
-        length: order.length,
-        volumetricWeight: order.volumetricWeight,
-        actualWeight: order.actualWeight,
-        invoiceNumber: order.invoiceNumber,
+        ...order,
         shipped: false,
         status: "pending",
         partner: null,
@@ -93,35 +87,19 @@ const createForwardOrder = async (req, res) => {
     } else {
       // Single order (Data provided in JSON body).
       const { order } = req.body;
-
-      let ordertype = order.orderType.toUpperCase();
-
       if (!order) {
         return res.status(400).json({ error: "Order data is missing" });
       }
-
+      
+      const validationErrors = validateOrder(order);
+      if (validationErrors.length > 0) {
+        return res.status(400).json({ error: validationErrors });
+      }
+      
       const newOrder = new Order({
         userId: userId,
-        orderId: `ORDER-${Date.now()}`, // Unique Order ID.
-        orderType: ordertype || "PREPAID",
-        consignee: order.consignee || user.name,
-        consigneeAddress1: order.consigneeAddress1,
-        consigneeAddress2: order.consigneeAddress2,
-        city: order.city,
-        state: order.state,
-        pincode: order.pincode,
-        telephone: order.telephone || user.telephone,
-        mobile: order.mobile || user.mobile,
-        collectableValue: order.collectableValue,
-        declaredValue: order.declaredValue,
-        itemDescription: order.itemDescription,
-        dgShipment: order.dgShipment || false,
-        quantity: order.quantity || 1,
-        height: order.height,
-        breadth: order.breadth,
-        length: order.length,
-        volumetricWeight: order.volumetricWeight || 0,
-        actualWeight: order.actualWeight,
+        orderId: `ORDER-${Date.now()}`,
+        ...order,
         invoiceNumber: `INV-${Date.now()}`,
         shipped: false,
         status: "pending",
@@ -129,15 +107,11 @@ const createForwardOrder = async (req, res) => {
         events: [],
       });
 
-      // Save the order to the database.
       const savedOrder = await newOrder.save();
-
       return res.status(200).json({
         success: true,
         message: "Order created successfully",
-        order: {
-          orderId: savedOrder.orderId,
-        },
+        order: { orderId: savedOrder.orderId },
       });
     }
   } catch (error) {
