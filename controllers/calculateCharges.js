@@ -255,8 +255,21 @@ async function calculateShippingCharges(req, res) {
     }
 
     const customerType = userProfile.customerType.toLowerCase();
-    const multiplierMap = { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 };
-    const multiplier = multiplierMap[customerType] || 1;
+    const multiplierMaps = {
+      xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
+      delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+      ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+      default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+    };
+
+    const getMultiplier = (carrier) => {
+      const carrierKey = carrier.toLowerCase();
+      return (
+        multiplierMaps[carrierKey]?.[customerType] ||
+        multiplierMaps.default[customerType] ||
+        1
+      );
+    };
 
     let originPincode;
     if (pickUpWareHouse === "Ship Duniya") {
@@ -277,7 +290,12 @@ async function calculateShippingCharges(req, res) {
         .json({ message: "Could not determine origin pincode." });
     }
 
-    const requestedCarrier = carrierName.toLowerCase().trim();
+    // Normalize carrier name for Ecom Express
+    let requestedCarrier = carrierName?.toLowerCase().trim();
+    if (requestedCarrier === "ecom express") {
+      requestedCarrier = "ecom";
+    }
+
     const uniqueServices = new Map();
 
     for (const orderId of orderIds) {
@@ -293,15 +311,17 @@ async function calculateShippingCharges(req, res) {
         breadth,
         length,
       } = orderDetails;
+
       if (!destinationPincode || isNaN(chargeableWeight)) continue;
 
+      // Fetch carrier charges based on the order type (COD or prepaid)
       const carrierResponse = await getCarrierCharges(
         requestedCarrier,
         originPincode,
         destinationPincode,
         chargeableWeight,
         CODAmount,
-        productType,
+        productType, // Pass the normalized product type
         height,
         breadth,
         length
@@ -309,12 +329,29 @@ async function calculateShippingCharges(req, res) {
 
       if (carrierResponse?.services) {
         carrierResponse.services.forEach((service) => {
-          const serviceKey = `${service.name}|${service.total_charges}`;
+          const multiplier = getMultiplier(requestedCarrier);
+          const baseTotal = service.total_charges || 0;
+          const baseCod = service.cod_charge || 0;
+          const baseFreight = service.freight_charge || 0;
+          const otherCharges = baseTotal - baseCod - baseFreight;
+
+          const totalPrice = baseTotal * multiplier;
+          const codCharge = baseCod * multiplier;
+          const freightCharge = baseFreight * multiplier;
+          const otherChargesTotal = otherCharges * multiplier;
+
+          const serviceKey = `${service.name}|${totalPrice.toFixed(2)}`;
+
           if (!uniqueServices.has(serviceKey)) {
             uniqueServices.set(serviceKey, {
-              carrierName: requestedCarrier,
+              carrierName:
+                requestedCarrier.charAt(0).toUpperCase() +
+                requestedCarrier.slice(1), // Capitalize first letter
               serviceType: service.name,
-              totalPrice: (service.total_charges || 0) * multiplier,
+              totalPrice: totalPrice,
+              codCharge: codCharge,
+              freightCharge: freightCharge,
+              otherCharges: otherChargesTotal,
             });
           }
         });
@@ -324,6 +361,7 @@ async function calculateShippingCharges(req, res) {
     const chargesBreakdown = Array.from(uniqueServices.values()).sort(
       (a, b) => a.totalPrice - b.totalPrice
     );
+
     res.json({
       message: "Shipping charges calculated successfully.",
       charges: chargesBreakdown,
@@ -343,9 +381,9 @@ async function fetchOrderDetails(orderId) {
   return {
     chargeableWeight:
       parseFloat(order.volumetricWeight) || parseFloat(order.actualWeight),
-    CODAmount: order.collectableValue,
+    CODAmount: parseFloat(order.collectableValue) || 0,
     pincode: order.pincode,
-    productType: order.type,
+    productType: order.orderType.toLowerCase(), // Include orderType
     height: order.height,
     breadth: order.breadth,
     length: order.length,
@@ -446,13 +484,7 @@ async function getXpressbeesCharges(
   }
 }
 
-async function getDelhiveryCharges(
-  origin,
-  destination,
-  weight,
-  codAmount,
-  productType
-) {
+async function getDelhiveryCharges(origin, destination, weight, codAmount, productType) {
   try {
     if (!origin || !destination) return null;
     if (isNaN(weight) || weight <= 0) return null;
@@ -460,38 +492,60 @@ async function getDelhiveryCharges(
     // Convert weight to grams as required by the API
     const weightInGrams = Math.round(weight);
 
-    // Construct the API URL
-    const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${productType === 'cod' ? 'COD' : 'Pre-paid'}&cod=${codAmount}`;
+    // Construct the API URLs for md=E and md=S
+    const urlE = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=E&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${
+      productType === "cod" ? "COD" : "Pre-paid"
+    }&cod=${codAmount}`;
 
-    // Log the request details for debugging
-    console.log("Delhivery API Request URL:", url);
+    const urlS = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=S&ss=Delivered&d_pin=${destination}&o_pin=${origin}&cgm=${weightInGrams}&pt=${
+      productType === "cod" ? "COD" : "Pre-paid"
+    }&cod=${codAmount}`;
 
-    // Make the API request
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      timeout: 5000,
-    });
+    // Log the request URLs for debugging
+    console.log("Delhivery API Request URLs:", { urlE, urlS });
 
-    // Log the raw response for debugging
-    console.log("Delhivery API Response:", response.data);
+    // Make both API requests in parallel
+    const [responseE, responseS] = await Promise.all([
+      axios.get(urlE, {
+        headers: {
+          Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 5000,
+      }),
+      axios.get(urlS, {
+        headers: {
+          Authorization: `Token ${process.env.DELHIVERY_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 5000,
+      }),
+    ]);
 
-    // Validate the response structure
-    if (!response.data || !Array.isArray(response.data)) {
-      console.error("❌ Invalid Delhivery response:", response.data);
-      return null;
-    }
+    // Log the raw responses for debugging
+    console.log("Delhivery API Response for md=E:", responseE.data);
+    console.log("Delhivery API Response for md=S:", responseS.data);
 
-    // Map the response data to match the expected structure
+    // Validate and process the responses
+    const servicesE = responseE.data?.map((service) => ({
+      name: service.service_type || "Delhivery Service (E)",
+      total_charges: service.total_amount || 0,
+      cod_charge: service.charge_COD || 0,
+      freight_charge: service.charge_DL || 0,
+    })) || [];
+
+    const servicesS = responseS.data?.map((service) => ({
+      name: service.service_type || "Delhivery Service (S)",
+      total_charges: service.total_amount || 0,
+      cod_charge: service.charge_COD || 0,
+      freight_charge: service.charge_DL || 0,
+    })) || [];
+
+    // Combine the services from both responses
+    const combinedServices = [...servicesE, ...servicesS];
+
     return {
-      services: response.data.map((service) => ({
-        name: service.service_type || "Delhivery Service",
-        total_charges: service.total_amount || 0,
-        cod_charge: service.charge_COD || 0,
-        freight_charge: service.charge_DL || 0,
-      })),
+      services: combinedServices,
     };
   } catch (error) {
     // Log the error details for debugging
@@ -500,7 +554,6 @@ async function getDelhiveryCharges(
     return null;
   }
 }
-
 
 async function getEcomCharges(
   origin,
@@ -511,7 +564,7 @@ async function getEcomCharges(
 ) {
   try {
     // Convert weight to number and handle minimum weight
-    const numericWeight = Math.max(0.5, parseFloat(weight/1000));
+    const numericWeight = Math.max(0.5, parseFloat(weight / 1000));
 
     const payload = {
       orginPincode: origin.toString(), // Note the API's spelling
