@@ -35,23 +35,29 @@ const transactionSchema = new mongoose.Schema(
     transactionMode: {
       type: String,
       enum: ["debit", "credit"],
-      required: true,
+      required: false,
+    },
+    debitAmount: {
+      type: Number,
+      default: 0,
+    },
+    creditAmount: {
+      type: Number,
+      default: 0,
     },
     transactionId: {
       type: String,
       required: false,
     },
     paymentId: {
-      type: String, // Payment ID for external payment systems
+      type: String,
       required: false,
     },
     awbNumber: {
-      // Add the AWB number here
       type: String,
       required: false,
     },
     shipmentId: {
-      // Add the shipment ID here
       type: String,
       required: false,
     },

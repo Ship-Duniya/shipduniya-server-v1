@@ -25,101 +25,118 @@ const createForwardOrder = async (req, res) => {
       return errors;
     };
 
+    // 🔥 IF BULK (Excel Upload)
     if (req.file) {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(req.file.buffer);
       const worksheet = workbook.worksheets[0];
-      const sheetData = [];
+      const orders = [];
 
       worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber > 1) {
-          const order = {
-            consignee: row.getCell(1).value,
-            consigneeAddress1: row.getCell(2).value,
-            consigneeAddress2: row.getCell(3).value,
-            orderType: (row.getCell(4).value || "PREPAID").toUpperCase(),
-            pincode: row.getCell(5).value,
-            mobile: row.getCell(6).value || user.mobile,
-            invoiceNumber:
-              row.getCell(7).value || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            telephone: row.getCell(8).value || user.telephone,
-            city: row.getCell(9).value,
-            state: row.getCell(10).value,
-            length: row.getCell(11).value,
-            breadth: row.getCell(12).value,
-            height: row.getCell(13).value,
-            collectableValue: row.getCell(14).value || 0,
-            declaredValue: row.getCell(15).value || 0,
-            itemDescription: row.getCell(16).value,
-            dgShipment: row.getCell(17).value || false,
-            quantity: row.getCell(18).value || 1,
-            volumetricWeight: row.getCell(19).value || 0,
-            actualWeight: row.getCell(20).value,
-          };
+        if (rowNumber === 1) return; // Skip header
 
-          const validationErrors = validateOrder(order);
-          if (validationErrors.length === 0) {
-            sheetData.push(order);
-          }
+        const getCellValue = (cell) => {
+          const val = row.getCell(cell).value;
+          if (val == null) return ""; // empty cell
+          if (typeof val === 'object' && val.richText) return val.richText.map(rt => rt.text).join('');
+          return val;
+        };
+
+        const order = {
+          userId,
+          consignee: getCellValue(1),
+          consigneeAddress1: getCellValue(2),
+          consigneeAddress2: getCellValue(3),
+          orderType: (getCellValue(4) || "PREPAID").toUpperCase(),
+          pincode: getCellValue(5).toString(),
+          mobile: getCellValue(6) || user.mobile,
+          orderId: getCellValue(7) || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          telephone: getCellValue(8),
+          city: getCellValue(9),
+          state: getCellValue(10),
+          length: Number(getCellValue(11)) || 0,
+          breadth: Number(getCellValue(12)) || 0,
+          height: Number(getCellValue(13)) || 0,
+          collectableValue: Number(getCellValue(14)) || 0,
+          declaredValue: Number(getCellValue(15)) || 0,
+          itemDescription: getCellValue(16),
+          dgShipment: getCellValue(17)?.toString().toLowerCase() === "true",
+          quantity: Number(getCellValue(18)) || 1,
+          volumetricWeight: Number(getCellValue(19)) || 0,
+          actualWeight: Number(getCellValue(20)) || 0,
+        };
+
+        const validationErrors = validateOrder(order);
+        if (validationErrors.length > 0) {
+          throw new Error(`Row ${rowNumber}: ${validationErrors.join(", ")}`);
         }
+
+        orders.push(order);
       });
 
-      if (sheetData.length === 0) {
-        return res.status(400).json({ error: "Uploaded file is empty or contains invalid data" });
-      }
-
-      const bulkOrders = sheetData.map((order) => ({
-        userId: userId,
-        orderId: `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        ...order,
-        shipped: false,
-        status: "pending",
-        partner: null,
-        events: [],
-      }));
-
-      const createdOrders = await Order.insertMany(bulkOrders);
-      return res.status(200).json({
-        success: true,
-        message: `${createdOrders.length} orders created successfully.`,
-        orders: createdOrders.map((o) => ({ orderId: o.orderId })),
-      });
-    } else {
-      // Single order (Data provided in JSON body).
-      const { order } = req.body;
-      if (!order) {
-        return res.status(400).json({ error: "Order data is missing" });
-      }
-      
-      const validationErrors = validateOrder(order);
-      if (validationErrors.length > 0) {
-        return res.status(400).json({ error: validationErrors });
-      }
-      
-      const newOrder = new Order({
-        userId: userId,
-        orderId: `ORDER-${Date.now()}`,
-        ...order,
-        invoiceNumber: `INV-${Date.now()}`,
-        shipped: false,
-        status: "pending",
-        partner: null,
-        events: [],
-      });
-
-      const savedOrder = await newOrder.save();
-      return res.status(200).json({
-        success: true,
-        message: "Order created successfully",
-        order: { orderId: savedOrder.orderId },
-      });
+      const createdOrders = await Order.insertMany(orders);
+      return res.status(201).json({ message: "Bulk orders created successfully.", orders: createdOrders });
     }
+
+    // 🔥 ELSE (Single order from request.body)
+    const {
+      consignee,
+      consigneeAddress1,
+      consigneeAddress2,
+      orderType,
+      pincode,
+      mobile,
+      orderId,
+      telephone,
+      city,
+      state,
+      length,
+      breadth,
+      height,
+      collectableValue,
+      declaredValue,
+      itemDescription,
+      dgShipment,
+      quantity,
+      volumetricWeight,
+      actualWeight,
+    } = req.body;
+
+    const singleOrder = {
+      userId,
+      consignee,
+      consigneeAddress1,
+      consigneeAddress2,
+      orderType: (orderType || "PREPAID").toUpperCase(),
+      pincode,
+      mobile: mobile || user.mobile,
+      orderId: orderId || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      telephone,
+      city,
+      state,
+      length: Number(length) || 0,
+      breadth: Number(breadth) || 0,
+      height: Number(height) || 0,
+      collectableValue: Number(collectableValue) || 0,
+      declaredValue: Number(declaredValue) || 0,
+      itemDescription,
+      dgShipment: dgShipment === true || dgShipment === "true",
+      quantity: Number(quantity) || 1,
+      volumetricWeight: Number(volumetricWeight) || 0,
+      actualWeight: Number(actualWeight) || 0,
+    };
+
+    const validationErrors = validateOrder(singleOrder);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ error: validationErrors });
+    }
+
+    const createdOrder = await Order.create(singleOrder);
+    return res.status(201).json({ message: "Order created successfully.", order: createdOrder });
+
   } catch (error) {
     console.error(error);
-    return res.status(500).json({
-      error: "An error occurred while processing the order",
-      details: error.message,
-    });
+    return res.status(400).json({ error: error.message || "Something went wrong" });
   }
 };
 
