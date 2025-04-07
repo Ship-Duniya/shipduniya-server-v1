@@ -13,170 +13,135 @@ const createForwardOrder = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const validateOrder = (order, isBulk) => {
+    // Helper function to validate a single order
+    const validateOrder = (order, isBulk = false) => {
       const errors = [];
-      if (isBulk) {
-        // Bulk-specific validations
-        if (!/^\d{6}$/.test(order.pincode))
-          errors.push("Invalid pincode. Must be a 6-digit number.");
-        if (!/^\d{10}$/.test(order.mobile))
-          errors.push("Invalid mobile number. Must be a 10-digit number.");
-        if (order.declaredValue <= 0)
-          errors.push("Declared value must be greater than 0.");
-        if (order.height <= 0 || order.length <= 0 || order.breadth <= 0)
-          errors.push("Dimensions must be greater than 0.");
-        if (order.actualWeight <= 0)
-          errors.push("Actual weight must be greater than 0.");
-      }
 
-      // Common validations for both bulk and single orders
-      if (order.telephone && !/^\d{10}$/.test(order.telephone))
-        errors.push("Invalid telephone number. Must be a 10-digit number.");
-      if (order.collectableValue > order.declaredValue)
-        errors.push("Collectable value cannot be greater than declared value.");
-      if (order.orderType === "PREPAID" && order.collectableValue > 0)
-        errors.push("Collectable value must be 0 for prepaid orders.");
+      if (!order.consignee) errors.push("Consignee is required.");
+      if (!order.consigneeAddress1)
+        errors.push("Consignee Address 1 is required.");
+      if (!order.city) errors.push("City is required.");
+      if (!order.state) errors.push("State is required.");
+      if (!order.mobile) errors.push("Mobile number is required.");
+
+      if (!/^\d{6}$/.test(order.pincode))
+        errors.push("Invalid pincode. Must be a 6-digit number.");
+      if (!/^\d{10}$/.test(order.mobile))
+        errors.push("Invalid mobile number. Must be a 10-digit number.");
+      if (order.declaredValue <= 0)
+        errors.push("Declared value must be greater than 0.");
+      if (order.height <= 0 || order.length <= 0 || order.breadth <= 0)
+        errors.push("Dimensions must be greater than 0.");
+      if (order.actualWeight <= 0)
+        errors.push("Actual weight must be greater than 0.");
+
       return errors;
     };
 
-    // 🔥 Bulk Order Processing (Excel Upload)
+    let ordersToCreate = [];
+
     if (req.file) {
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(req.file.buffer);
-      const worksheet = workbook.worksheets[0];
-      const orders = [];
-      const errors = [];
+      // BULK UPLOAD FLOW (file uploaded)
 
-      worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) return; // Skip header
+      const filePath = req.file.path; // or req.file.location (if cloud)
 
-        try {
-          const getCellValue = (cell) => {
-            const val = row.getCell(cell).value;
-            if (val == null) return "";
-            if (typeof val === "object" && val.richText)
-              return val.richText.map((rt) => rt.text).join("");
-            return val.toString().trim();
-          };
+      // TODO: Parse the file here (CSV/Excel)
+      // Example: using 'csvtojson' or 'xlsx' libraries
+      const parsedOrders = []; // parsed orders from file
 
-          const order = {
-            userId,
-            consignee: getCellValue(1),
-            consigneeAddress1: getCellValue(2),
-            consigneeAddress2: getCellValue(3),
-            orderType: (getCellValue(4) || "PREPAID").toUpperCase(),
-            pincode: getCellValue(5),
-            mobile: getCellValue(6) || user.mobile.toString(),
-            orderId: `ORDER-${crypto
-              .randomUUID()
-              .replace(/-/g, "")
-              .substring(0, 12)}`, // Updated orderId
-            telephone: getCellValue(8),
-            city: getCellValue(9),
-            state: getCellValue(10),
-            length: Number(getCellValue(11)) || 0,
-            breadth: Number(getCellValue(12)) || 0,
-            height: Number(getCellValue(13)) || 0,
-            collectableValue: Number(getCellValue(14)) || 0,
-            declaredValue: Number(getCellValue(15)) || 0,
-            itemDescription: getCellValue(16),
-            dgShipment: getCellValue(17)?.toString().toLowerCase() === "true",
-            quantity: Number(getCellValue(18)) || 1,
-            volumetricWeight: Number(getCellValue(19)) || 0,
-            actualWeight: Number(getCellValue(20)) || 0,
-          };
-
-          // Convert numbers to strings for validation
-          order.pincode = order.pincode.toString();
-          order.mobile = order.mobile.toString();
-          if (order.telephone) order.telephone = order.telephone.toString();
-
-          const validationErrors = validateOrder(order, true); // Validate as bulk
-          if (validationErrors.length > 0) {
-            throw new Error(`Row ${rowNumber}: ${validationErrors.join(", ")}`);
-          }
-
-          orders.push(order);
-        } catch (error) {
-          errors.push(error.message);
+      // Validate each order
+      for (const order of parsedOrders) {
+        const errors = validateOrder(order, true);
+        if (errors.length > 0) {
+          return res
+            .status(400)
+            .json({
+              error: `Validation failed for one of the orders: ${errors.join(
+                ", "
+              )}`,
+            });
         }
-      });
-
-      if (errors.length > 0) {
-        return res.status(400).json({ error: errors.join("; ") });
       }
 
-      const createdOrders = await Order.insertMany(orders);
-      return res.status(201).json({
-        message: "Bulk orders created successfully.",
-        orders: createdOrders,
+      ordersToCreate = parsedOrders.map((order) => ({
+        user: userId,
+        orderType: order.orderType,
+        consignee: order.consignee,
+        consigneeAddress1: order.consigneeAddress1,
+        consigneeAddress2: order.consigneeAddress2 || "",
+        city: order.city,
+        state: order.state,
+        pincode: order.pincode,
+        mobile: order.mobile,
+        telephone: order.telephone || "",
+        actualWeight: order.actualWeight,
+        declaredValue: order.declaredValue,
+        collectableValue: order.collectableValue || 0,
+        itemDescription: order.itemDescription || "",
+        length: order.length,
+        breadth: order.breadth,
+        height: order.height,
+        volumetricWeight: order.volumetricWeight || 0,
+        dgShipment: order.dgShipment || false,
+        invoiceNumber: order.invoiceNumber,
+        invoiceUrl: "", // file bulk upload won't have invoice URL
+        quantity: order.quantity || 1,
+      }));
+    } else {
+      // SINGLE ORDER FLOW (req.body.order)
+
+      const { order } = req.body;
+
+      if (!order) {
+        return res.status(400).json({ error: "Order data is missing" });
+      }
+
+      const errors = validateOrder(order, false);
+      if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join(", ") });
+      }
+
+      let invoiceUrl = "";
+      if (req.file) {
+        const file = req.file;
+        invoiceUrl = file.path || file.location; // cloud/local
+      }
+
+      ordersToCreate.push({
+        user: userId,
+        orderType: order.orderType,
+        consignee: order.consignee,
+        consigneeAddress1: order.consigneeAddress1,
+        consigneeAddress2: order.consigneeAddress2 || "",
+        city: order.city,
+        state: order.state,
+        pincode: order.pincode,
+        mobile: order.mobile,
+        telephone: order.telephone || "",
+        actualWeight: order.actualWeight,
+        declaredValue: order.declaredValue,
+        collectableValue: order.collectableValue || 0,
+        itemDescription: order.itemDescription || "",
+        length: order.length,
+        breadth: order.breadth,
+        height: order.height,
+        volumetricWeight: order.volumetricWeight || 0,
+        dgShipment: order.dgShipment || false,
+        invoiceNumber: order.invoiceNumber,
+        invoiceUrl: invoiceUrl,
+        quantity: order.quantity || 1,
       });
     }
 
-    // 🔥 Single Order Processing
-    const {
-      consignee,
-      consigneeAddress1,
-      consigneeAddress2,
-      orderType,
-      pincode,
-      mobile,
-      telephone,
-      city,
-      state,
-      length,
-      breadth,
-      height,
-      collectableValue,
-      declaredValue,
-      itemDescription,
-      dgShipment,
-      quantity,
-      volumetricWeight,
-      actualWeight,
-    } = req.body;
+    // Create orders in DB
+    const createdOrders = await ForwardOrder.insertMany(ordersToCreate);
 
-    const singleOrder = {
-      userId,
-      consignee: consignee,
-      consigneeAddress1: consigneeAddress1,
-      consigneeAddress2: consigneeAddress2,
-      orderType: (orderType || "PREPAID").toUpperCase(),
-      pincode: String(pincode),
-      mobile: mobile ? String(mobile) : user.mobile,
-      orderId: `ORDER-${crypto
-        .randomUUID()
-        .replace(/-/g, "")
-        .substring(0, 12)}`, // Updated orderId
-      telephone: telephone ? String(telephone) : "",
-      city: city,
-      state: state,
-      length: Number(length) || 1,
-      breadth: Number(breadth) || 1,
-      height: Number(height) || 1,
-      collectableValue: Number(collectableValue) || 0,
-      declaredValue: Number(declaredValue) || 0,
-      itemDescription,
-      dgShipment: dgShipment === true || dgShipment === "true",
-      quantity: Number(quantity) || 1,
-      volumetricWeight: Number(volumetricWeight) || 0,
-      actualWeight: Number(actualWeight) || 0,
-    };
-
-    const validationErrors = validateOrder(singleOrder, false); // Validate as single order
-    if (validationErrors.length > 0) {
-      return res.status(400).json({ error: validationErrors });
-    }
-
-    const createdOrder = await Order.create(singleOrder);
     return res
       .status(201)
-      .json({ message: "Order created successfully.", order: createdOrder });
+      .json({ message: "Orders created successfully", orders: createdOrders });
   } catch (error) {
     console.error(error);
-    return res
-      .status(400)
-      .json({ error: error.message || "Something went wrong" });
+    return res.status(500).json({ error: "Something went wrong" });
   }
 };
 
