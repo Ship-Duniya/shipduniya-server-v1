@@ -2,6 +2,7 @@ const Order = require("../models/Order");
 const User = require("../models/User");
 const FormData = require("form-data");
 const ExcelJS = require("exceljs");
+const crypto = require("crypto");
 
 const createForwardOrder = async (req, res) => {
   const userId = req.user.id;
@@ -14,71 +15,99 @@ const createForwardOrder = async (req, res) => {
 
     const validateOrder = (order) => {
       const errors = [];
-      if (!/^\d{6}$/.test(order.pincode)) errors.push("Invalid pincode. Must be a 6-digit number.");
-      if (!/^\d{10}$/.test(order.mobile)) errors.push("Invalid mobile number. Must be a 10-digit number.");
-      if (order.telephone && !/^\d{10}$/.test(order.telephone)) errors.push("Invalid telephone number. Must be a 10-digit number.");
-      if (order.declaredValue <= 0) errors.push("Declared value must be greater than 0.");
-      if (order.collectableValue > order.declaredValue) errors.push("Collectable value cannot be greater than declared value.");
-      if (order.orderType === "PREPAID" && order.collectableValue > 0) errors.push("Collectable value must be 0 for prepaid orders.");
-      if (order.height <= 0 || order.length <= 0 || order.breadth <= 0) errors.push("Dimensions must be greater than 0.");
-      if (order.actualWeight <= 0) errors.push("Actual weight must be greater than 0.");
+      if (!/^\d{6}$/.test(order.pincode))
+        errors.push("Invalid pincode. Must be a 6-digit number.");
+      if (!/^\d{10}$/.test(order.mobile))
+        errors.push("Invalid mobile number. Must be a 10-digit number.");
+      if (order.telephone && !/^\d{10}$/.test(order.telephone))
+        errors.push("Invalid telephone number. Must be a 10-digit number.");
+      if (order.declaredValue <= 0)
+        errors.push("Declared value must be greater than 0.");
+      if (order.collectableValue > order.declaredValue)
+        errors.push("Collectable value cannot be greater than declared value.");
+      if (order.orderType === "PREPAID" && order.collectableValue > 0)
+        errors.push("Collectable value must be 0 for prepaid orders.");
+      if (order.height <= 0 || order.length <= 0 || order.breadth <= 0)
+        errors.push("Dimensions must be greater than 0.");
+      if (order.actualWeight <= 0)
+        errors.push("Actual weight must be greater than 0.");
       return errors;
     };
 
-    // 🔥 IF BULK (Excel Upload)
+    // 🔥 Bulk Order Processing (Excel Upload)
     if (req.file) {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(req.file.buffer);
       const worksheet = workbook.worksheets[0];
       const orders = [];
+      const errors = [];
 
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return; // Skip header
 
-        const getCellValue = (cell) => {
-          const val = row.getCell(cell).value;
-          if (val == null) return ""; // empty cell
-          if (typeof val === 'object' && val.richText) return val.richText.map(rt => rt.text).join('');
-          return val;
-        };
+        try {
+          const getCellValue = (cell) => {
+            const val = row.getCell(cell).value;
+            if (val == null) return "";
+            if (typeof val === "object" && val.richText)
+              return val.richText.map((rt) => rt.text).join("");
+            return val.toString().trim();
+          };
 
-        const order = {
-          userId,
-          consignee: getCellValue(1),
-          consigneeAddress1: getCellValue(2),
-          consigneeAddress2: getCellValue(3),
-          orderType: (getCellValue(4) || "PREPAID").toUpperCase(),
-          pincode: getCellValue(5).toString(),
-          mobile: getCellValue(6) || user.mobile,
-          orderId: getCellValue(7) || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          telephone: getCellValue(8),
-          city: getCellValue(9),
-          state: getCellValue(10),
-          length: Number(getCellValue(11)) || 0,
-          breadth: Number(getCellValue(12)) || 0,
-          height: Number(getCellValue(13)) || 0,
-          collectableValue: Number(getCellValue(14)) || 0,
-          declaredValue: Number(getCellValue(15)) || 0,
-          itemDescription: getCellValue(16),
-          dgShipment: getCellValue(17)?.toString().toLowerCase() === "true",
-          quantity: Number(getCellValue(18)) || 1,
-          volumetricWeight: Number(getCellValue(19)) || 0,
-          actualWeight: Number(getCellValue(20)) || 0,
-        };
+          const order = {
+            userId,
+            consignee: getCellValue(1),
+            consigneeAddress1: getCellValue(2),
+            consigneeAddress2: getCellValue(3),
+            orderType: (getCellValue(4) || "PREPAID").toUpperCase(),
+            pincode: getCellValue(5),
+            mobile: getCellValue(6) || user.mobile.toString(),
+            orderId: `ORDER-${crypto.randomUUID()}`, // Unique order ID
+            telephone: getCellValue(8),
+            city: getCellValue(9),
+            state: getCellValue(10),
+            length: Number(getCellValue(11)) || 0,
+            breadth: Number(getCellValue(12)) || 0,
+            height: Number(getCellValue(13)) || 0,
+            collectableValue: Number(getCellValue(14)) || 0,
+            declaredValue: Number(getCellValue(15)) || 0,
+            itemDescription: getCellValue(16),
+            dgShipment: getCellValue(17)?.toString().toLowerCase() === "true",
+            quantity: Number(getCellValue(18)) || 1,
+            volumetricWeight: Number(getCellValue(19)) || 0,
+            actualWeight: Number(getCellValue(20)) || 0,
+          };
 
-        const validationErrors = validateOrder(order);
-        if (validationErrors.length > 0) {
-          throw new Error(`Row ${rowNumber}: ${validationErrors.join(", ")}`);
+          // Convert numbers to strings for validation
+          order.pincode = order.pincode.toString();
+          order.mobile = order.mobile.toString();
+          if (order.telephone) order.telephone = order.telephone.toString();
+
+          const validationErrors = validateOrder(order);
+          if (validationErrors.length > 0) {
+            throw new Error(`Row ${rowNumber}: ${validationErrors.join(", ")}`);
+          }
+
+          orders.push(order);
+        } catch (error) {
+          errors.push(error.message);
         }
-
-        orders.push(order);
       });
 
+      if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join("; ") });
+      }
+
       const createdOrders = await Order.insertMany(orders);
-      return res.status(201).json({ message: "Bulk orders created successfully.", orders: createdOrders });
+      return res
+        .status(201)
+        .json({
+          message: "Bulk orders created successfully.",
+          orders: createdOrders,
+        });
     }
 
-    // 🔥 ELSE (Single order from request.body)
+    // 🔥 Single Order Processing
     const {
       consignee,
       consigneeAddress1,
@@ -86,7 +115,6 @@ const createForwardOrder = async (req, res) => {
       orderType,
       pincode,
       mobile,
-      orderId,
       telephone,
       city,
       state,
@@ -108,10 +136,10 @@ const createForwardOrder = async (req, res) => {
       consigneeAddress1,
       consigneeAddress2,
       orderType: (orderType || "PREPAID").toUpperCase(),
-      pincode,
-      mobile: mobile || user.mobile,
-      orderId: orderId || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      telephone,
+      pincode: String(pincode),
+      mobile: mobile ? String(mobile) : user.mobile.toString(),
+      orderId: `ORDER-${crypto.randomUUID()}`, // Always generate unique ID
+      telephone: telephone ? String(telephone) : "",
       city,
       state,
       length: Number(length) || 0,
@@ -132,11 +160,14 @@ const createForwardOrder = async (req, res) => {
     }
 
     const createdOrder = await Order.create(singleOrder);
-    return res.status(201).json({ message: "Order created successfully.", order: createdOrder });
-
+    return res
+      .status(201)
+      .json({ message: "Order created successfully.", order: createdOrder });
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || "Something went wrong" });
+    return res
+      .status(400)
+      .json({ error: error.message || "Something went wrong" });
   }
 };
 
