@@ -67,7 +67,10 @@ const createForwardOrder = async (req, res) => {
             orderType: (getCellValue(4) || "PREPAID").toUpperCase(),
             pincode: getCellValue(5),
             mobile: getCellValue(6) || user.mobile.toString(),
-            orderId: `ORDER-${crypto.randomUUID().replace(/-/g, '').substring(0, 12)}`, // Updated orderId
+            orderId: `ORDER-${crypto
+              .randomUUID()
+              .replace(/-/g, "")
+              .substring(0, 12)}`, // Updated orderId
             telephone: getCellValue(8),
             city: getCellValue(9),
             state: getCellValue(10),
@@ -135,21 +138,24 @@ const createForwardOrder = async (req, res) => {
 
     const singleOrder = {
       userId,
-      consignee,
-      consigneeAddress1,
-      consigneeAddress2,
+      consignee: consignee,
+      consigneeAddress1: consigneeAddress1,
+      consigneeAddress2: consigneeAddress2,
       orderType: (orderType || "PREPAID").toUpperCase(),
       pincode: String(pincode),
       mobile: mobile ? String(mobile) : user.mobile,
-      orderId: `ORDER-${crypto.randomUUID().replace(/-/g, '').substring(0, 12)}`, // Updated orderId
+      orderId: `ORDER-${crypto
+        .randomUUID()
+        .replace(/-/g, "")
+        .substring(0, 12)}`, // Updated orderId
       telephone: telephone ? String(telephone) : "",
-      city,
-      state,
-      length: Number(length) || 0,
-      breadth: Number(breadth) || 0,
-      height: Number(height) || 0,
-      collectableValue: Number(collectableValue) || 0,
-      declaredValue: Number(declaredValue) || 0,
+      city: city,
+      state: state,
+      length: Number(length) || 1,
+      breadth: Number(breadth) || 1,
+      height: Number(height) || 1,
+      collectableValue: Number(collectableValue) || 1,
+      declaredValue: Number(declaredValue) || 1,
       itemDescription,
       dgShipment: dgShipment === true || dgShipment === "true",
       quantity: Number(quantity) || 1,
