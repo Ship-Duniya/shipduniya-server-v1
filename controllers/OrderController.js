@@ -13,135 +13,140 @@ const createForwardOrder = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Helper function to validate a single order
-    const validateOrder = (order, isBulk = false) => {
-      const errors = [];
-
-      if (!order.consignee) errors.push("Consignee is required.");
-      if (!order.consigneeAddress1)
-        errors.push("Consignee Address 1 is required.");
-      if (!order.city) errors.push("City is required.");
-      if (!order.state) errors.push("State is required.");
-      if (!order.mobile) errors.push("Mobile number is required.");
-
-      if (!/^\d{6}$/.test(order.pincode))
-        errors.push("Invalid pincode. Must be a 6-digit number.");
-      if (!/^\d{10}$/.test(order.mobile))
-        errors.push("Invalid mobile number. Must be a 10-digit number.");
-      if (order.declaredValue <= 0)
-        errors.push("Declared value must be greater than 0.");
-      if (order.height <= 0 || order.length <= 0 || order.breadth <= 0)
-        errors.push("Dimensions must be greater than 0.");
-      if (order.actualWeight <= 0)
-        errors.push("Actual weight must be greater than 0.");
-
-      return errors;
-    };
-
-    let ordersToCreate = [];
-
     if (req.file) {
-      // BULK UPLOAD FLOW (file uploaded)
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.worksheets[0];
+      const sheetData = [];
 
-      const filePath = req.file.path; // or req.file.location (if cloud)
-
-      // TODO: Parse the file here (CSV/Excel)
-      // Example: using 'csvtojson' or 'xlsx' libraries
-      const parsedOrders = []; // parsed orders from file
-
-      // Validate each order
-      for (const order of parsedOrders) {
-        const errors = validateOrder(order, true);
-        if (errors.length > 0) {
-          return res
-            .status(400)
-            .json({
-              error: `Validation failed for one of the orders: ${errors.join(
-                ", "
-              )}`,
-            });
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+          // Skip header row
+          sheetData.push({
+            // Corrected column mapping based on your Excel structure
+            consignee: row.getCell(1).value,
+            consigneeAddress1: row.getCell(2).value,
+            consigneeAddress2: row.getCell(3).value,
+            orderType: (row.getCell(4).value || "PREPAID").toUpperCase(),
+            pincode: row.getCell(5).value,
+            mobile: row.getCell(6).value || user.mobile,
+            invoiceNumber:
+              row.getCell(7).value ||
+              `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            telephone: row.getCell(8).value || user.telephone,
+            city: row.getCell(9).value,
+            state: row.getCell(10).value,
+            length: row.getCell(11).value,
+            breadth: row.getCell(12).value,
+            height: row.getCell(13).value,
+            collectableValue: row.getCell(14).value || 0,
+            declaredValue: row.getCell(15).value || 0,
+            itemDescription: row.getCell(16).value,
+            dgShipment: row.getCell(17).value || false,
+            quantity: row.getCell(18).value || 1,
+            volumetricWeight: row.getCell(19).value || 0,
+            actualWeight: row.getCell(20).value,
+          });
         }
+      });
+
+      if (sheetData.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "Uploaded file is empty or invalid" });
       }
 
-      ordersToCreate = parsedOrders.map((order) => ({
-        user: userId,
+      const bulkOrders = sheetData.map((order) => ({
+        userId: userId,
+        orderId: `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         orderType: order.orderType,
-        consignee: order.consignee,
+        consignee: order.consignee || user.name,
         consigneeAddress1: order.consigneeAddress1,
-        consigneeAddress2: order.consigneeAddress2 || "",
+        consigneeAddress2: order.consigneeAddress2,
         city: order.city,
         state: order.state,
         pincode: order.pincode,
+        telephone: order.telephone,
         mobile: order.mobile,
-        telephone: order.telephone || "",
-        actualWeight: order.actualWeight,
+        collectableValue: order.collectableValue,
         declaredValue: order.declaredValue,
-        collectableValue: order.collectableValue || 0,
-        itemDescription: order.itemDescription || "",
-        length: order.length,
-        breadth: order.breadth,
+        itemDescription: order.itemDescription,
+        dgShipment: order.dgShipment,
+        quantity: order.quantity,
         height: order.height,
-        volumetricWeight: order.volumetricWeight || 0,
-        dgShipment: order.dgShipment || false,
+        breadth: order.breadth,
+        length: order.length,
+        volumetricWeight: order.volumetricWeight,
+        actualWeight: order.actualWeight,
         invoiceNumber: order.invoiceNumber,
-        invoiceUrl: "", // file bulk upload won't have invoice URL
-        quantity: order.quantity || 1,
+        shipped: false,
+        status: "pending",
+        partner: null,
+        events: [],
       }));
-    } else {
-      // SINGLE ORDER FLOW (req.body.order)
 
+      const createdOrders = await Order.insertMany(bulkOrders);
+      return res.status(200).json({
+        success: true,
+        message: `${createdOrders.length} orders created successfully.`,
+        orders: createdOrders.map((o) => ({ orderId: o.orderId })),
+      });
+    } else {
+      // Single order (Data provided in JSON body).
       const { order } = req.body;
+
+      let ordertype = order.orderType.toUpperCase();
 
       if (!order) {
         return res.status(400).json({ error: "Order data is missing" });
       }
 
-      const errors = validateOrder(order, false);
-      if (errors.length > 0) {
-        return res.status(400).json({ error: errors.join(", ") });
-      }
-
-      let invoiceUrl = "";
-      if (req.file) {
-        const file = req.file;
-        invoiceUrl = file.path || file.location; // cloud/local
-      }
-
-      ordersToCreate.push({
-        user: userId,
-        orderType: order.orderType,
-        consignee: order.consignee,
+      const newOrder = new Order({
+        userId: userId,
+        orderId: `ORDER-${Date.now()}`, // Unique Order ID.
+        orderType: ordertype || "PREPAID",
+        consignee: order.consignee || user.name,
         consigneeAddress1: order.consigneeAddress1,
-        consigneeAddress2: order.consigneeAddress2 || "",
+        consigneeAddress2: order.consigneeAddress2,
         city: order.city,
         state: order.state,
         pincode: order.pincode,
-        mobile: order.mobile,
-        telephone: order.telephone || "",
-        actualWeight: order.actualWeight,
+        telephone: order.telephone || user.telephone,
+        mobile: order.mobile || user.mobile,
+        collectableValue: order.collectableValue,
         declaredValue: order.declaredValue,
-        collectableValue: order.collectableValue || 0,
-        itemDescription: order.itemDescription || "",
-        length: order.length,
-        breadth: order.breadth,
-        height: order.height,
-        volumetricWeight: order.volumetricWeight || 0,
+        itemDescription: order.itemDescription,
         dgShipment: order.dgShipment || false,
-        invoiceNumber: order.invoiceNumber,
-        invoiceUrl: invoiceUrl,
         quantity: order.quantity || 1,
+        height: order.height,
+        breadth: order.breadth,
+        length: order.length,
+        volumetricWeight: order.volumetricWeight || 0,
+        actualWeight: order.actualWeight,
+        invoiceNumber: `INV-${Date.now()}`,
+        shipped: false,
+        status: "pending",
+        partner: null,
+        events: [],
+      });
+
+      // Save the order to the database.
+      const savedOrder = await newOrder.save();
+
+      return res.status(200).json({
+        success: true,
+        message: "Order created successfully",
+        order: {
+          orderId: savedOrder.orderId,
+        },
       });
     }
-
-    // Create orders in DB
-    const createdOrders = await ForwardOrder.insertMany(ordersToCreate);
-
-    return res
-      .status(201)
-      .json({ message: "Orders created successfully", orders: createdOrders });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: "Something went wrong" });
+    return res.status(500).json({
+      error: "An error occurred while processing the order",
+      details: error.message,
+    });
   }
 };
 
