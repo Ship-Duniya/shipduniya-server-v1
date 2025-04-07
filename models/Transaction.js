@@ -14,7 +14,6 @@ const transactionSchema = new mongoose.Schema(
       required: true,
     },
 
-    // Separate debit and credit
     debitAmount: {
       type: Number,
       default: 0,
@@ -89,6 +88,7 @@ const transactionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
     enteredWeight: {
       type: Number,
       default: 0,
@@ -109,6 +109,10 @@ const transactionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    rtoExtraWeightCharges: {
+      type: Number,
+      default: 0,
+    },
     freightReverse: {
       type: Number,
       default: 0,
@@ -117,53 +121,57 @@ const transactionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    rtoExtraWeightCharges: {
-      type: Number,
-      default: 0,
-    },
-    totalCharges: {
-      type: Number,
-      default: 0,
-    },
 
-    // 🏋️‍♂️ Weight Reconciliation fields
+    // 🆕 🆕 Newly added fields for Invoice
     orderId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Order",
-    },
-    weight: {
-      type: Number,
-      default: 0,
-    },
-    length: {
-      type: Number,
-      default: 0,
-    },
-    width: {
-      type: Number,
-      default: 0,
-    },
-    height: {
-      type: Number,
-      default: 0,
-    },
-    slab: {
       type: String,
     },
-    volumetricWeight: {
-      type: Number,
-      default: 0,
-    },
-    forward: {
-      type: Number,
-      default: 0,
-    },
-    chargedToWallet: {
-      type: Number,
-      default: 0,
-    },
-    productDescription: {
+    paymentType: {
       type: String,
+    },
+    pincode: {
+      type: String,
+    },
+    city: {
+      type: String,
+    },
+    zone: {
+      type: String,
+    },
+    originCity: {
+      type: String,
+    },
+    originState: {
+      type: String,
+    },
+    destinationCity: {
+      type: String,
+    },
+    destinationState: {
+      type: String,
+    },
+    pickupPincode: {
+      type: String,
+    },
+    chargedWeight: {
+      type: Number,
+      default: 0,
+    },
+    gst: {
+      type: Number,
+      default: 0,
+    },
+    sgst: {
+      type: Number,
+      default: 0,
+    },
+    cgst: {
+      type: Number,
+      default: 0,
+    },
+    totalAmount: {
+      type: Number,
+      default: 0,
     },
   },
   { timestamps: true }
