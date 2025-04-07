@@ -18,16 +18,19 @@ const createForwardOrder = async (req, res) => {
       await workbook.xlsx.load(req.file.buffer);
       const worksheet = workbook.worksheets[0];
       const sheetData = [];
+      const validationErrors = [];
 
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber > 1) {
           // Skip header row
-          sheetData.push({
-            // Corrected column mapping based on your Excel structure
+          const rowData = {
+            rowNumber,
             consignee: row.getCell(1).value,
             consigneeAddress1: row.getCell(2).value,
             consigneeAddress2: row.getCell(3).value,
-            orderType: (row.getCell(4).value || "PREPAID").toUpperCase(),
+            orderType: (row.getCell(4).value || "PREPAID")
+              .toString()
+              .toUpperCase(),
             pincode: row.getCell(5).value,
             mobile: row.getCell(6).value || user.mobile,
             invoiceNumber:
@@ -39,16 +42,116 @@ const createForwardOrder = async (req, res) => {
             length: row.getCell(11).value,
             breadth: row.getCell(12).value,
             height: row.getCell(13).value,
-            collectableValue: row.getCell(14).value || 0,
-            declaredValue: row.getCell(15).value || 0,
+            collectableValue: parseFloat(row.getCell(14).value) || 0,
+            declaredValue: parseFloat(row.getCell(15).value) || 0,
             itemDescription: row.getCell(16).value,
             dgShipment: row.getCell(17).value || false,
-            quantity: row.getCell(18).value || 1,
-            volumetricWeight: row.getCell(19).value || 0,
-            actualWeight: row.getCell(20).value,
-          });
+            quantity: parseInt(row.getCell(18).value) || 1,
+            volumetricWeight: parseFloat(row.getCell(19).value) || 0,
+            actualWeight: parseFloat(row.getCell(20).value),
+          };
+
+          // Validate each field
+          const errors = [];
+
+          if (
+            !rowData.consignee ||
+            rowData.consignee.toString().trim() === ""
+          ) {
+            errors.push("Consignee is required");
+          }
+
+          if (
+            !rowData.consigneeAddress1 ||
+            rowData.consigneeAddress1.toString().trim() === ""
+          ) {
+            errors.push("Consignee Address 1 is required");
+          }
+
+          if (rowData.orderType !== "PREPAID" && rowData.orderType !== "COD") {
+            errors.push("Order Type must be either PREPAID or COD");
+          }
+
+          if (
+            !rowData.pincode ||
+            rowData.pincode.toString().length !== 6 ||
+            isNaN(rowData.pincode)
+          ) {
+            errors.push("Pincode must be 6 digits");
+          }
+
+          if (
+            !rowData.mobile ||
+            rowData.mobile.toString().replace(/\D/g, "").length !== 10
+          ) {
+            errors.push("Mobile must be 10 digits");
+          }
+
+          if (
+            !rowData.invoiceNumber ||
+            rowData.invoiceNumber.toString().trim() === ""
+          ) {
+            errors.push("Invoice Number is required");
+          }
+
+          if (
+            rowData.orderType === "PREPAID" &&
+            rowData.collectableValue !== 0
+          ) {
+            errors.push("Collectable Value must be 0 for PREPAID orders");
+          }
+
+          if (rowData.orderType === "COD" && rowData.collectableValue <= 0) {
+            errors.push(
+              "Collectable Value must be greater than 0 for COD orders"
+            );
+          }
+
+          if (rowData.collectableValue > rowData.declaredValue) {
+            errors.push(
+              "Collectable Value cannot be greater than Declared Value"
+            );
+          }
+
+          if (rowData.declaredValue <= 0) {
+            errors.push("Declared Value must be greater than 0");
+          }
+
+          if (
+            !rowData.itemDescription ||
+            rowData.itemDescription.toString().trim() === ""
+          ) {
+            errors.push("Item Description is required");
+          }
+
+          if (rowData.quantity <= 0) {
+            errors.push("Quantity must be greater than 0");
+          }
+
+          if (rowData.actualWeight <= 0) {
+            errors.push("Actual Weight must be greater than 0");
+          }
+
+          if (errors.length > 0) {
+            validationErrors.push({
+              row: rowNumber,
+              errors: errors,
+            });
+          } else {
+            sheetData.push(rowData);
+          }
         }
       });
+
+      if (validationErrors.length > 0) {
+        const errorMessages = validationErrors.map(
+          (err) => `Row ${err.row}: ${err.errors.join(", ")}`
+        );
+        return res.status(400).json({
+          error: "Validation errors in Excel file",
+          details: errorMessages,
+        });
+      }
 
       if (sheetData.length === 0) {
         return res
