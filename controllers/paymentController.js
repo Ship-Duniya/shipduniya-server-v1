@@ -65,7 +65,7 @@ const verifyPayment = async (req, res) => {
 // Create a transaction record after successful payment
 const createTransactionDetails = async (req, res) => {
   const { id } = req.user; // Authenticated user ID
-  const { orderId, paymentId, amount, currency, description } = req.body;
+  const { orderId, paymentId, amount } = req.body;
 
   try {
     const user = await User.findById(id);
@@ -73,38 +73,31 @@ const createTransactionDetails = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Always credit the wallet upon successful payment
-    const newBalance = user.wallet + amount;
-
-    // Create the transaction record
-    const newTransaction = new Transaction({
-      userId: id,
-      orderId,
-      paymentId,
-      transactionId: paymentId,
-      amount,
-      currency,
-      type: "wallet",
-      description,
-      balance: newBalance,
-      status: "success",
-      transactionMode: "credit", // Always credit for wallet recharge
-      metadata: { additionalInfo: description },
-    });
-
-    // Update the user's wallet balance
-    user.wallet = newBalance;
+    // Update wallet balance
+    user.wallet += amount;
     await user.save();
 
-    // Save the transaction to the database
-    await newTransaction.save();
+    // Create Transaction record
+    const transaction = await Transaction.create({
+      userId: id,
+      type: ["wallet", "payment"], // Payment type
+      debitAmount: 0, // No debit
+      creditAmount: amount, // Wallet top-up
+      currency: "INR",
+      balance: user.wallet, // Updated wallet balance
+      description: `Wallet top-up via Razorpay (Order ID: ${orderId})`,
+      status: "success",
+      transactionId: paymentId, // Razorpay payment ID is unique
+      transactionMode: "razorpay", // Mode is razorpay
+    });
 
     res.status(201).json({
       message: "Wallet recharged successfully",
-      transaction: newTransaction,
+      transactionId: transaction._id,
+      walletBalance: user.wallet,
     });
   } catch (error) {
-    console.error("Error creating transaction details:", error);
+    console.error("Error creating transaction:", error);
     res.status(500).json({ message: "Server error", error });
   }
 };

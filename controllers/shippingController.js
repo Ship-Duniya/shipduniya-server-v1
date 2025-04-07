@@ -204,16 +204,29 @@ const createForwardShipping = async (req, res) => {
     const transaction = await Transaction.create({
       userId: user._id,
       type: ["wallet", "shipping"],
-      amount: totalShippingCost,
+      debitAmount: totalShippingCost, // 🚀 debit amount added
+      creditAmount: 0, // 🚀 credit is 0 in this case
       currency: "INR",
       balance: user.wallet,
-      transactionMode: "debit", // Marked as DEBIT since amount is deducted
+      transactionMode: "debit", // debit since wallet is charged
       description: `Shipping charges deducted for orders: ${processedOrders.join(
         ", "
       )}`,
       status: "success",
       transactionId: transactionId,
-      shippingDetails: shippingRecords, // Store all shipping AWB and Shipment IDs
+      shippingDetails: shippingRecords.map((record) => ({
+        awbNumber: record.awbNumber,
+        shipmentId: record.shipmentId,
+        courier: normalizedPartner,
+        weight: record.weight || 0,
+        length: record.length || 0,
+        height: record.height || 0,
+        slab: record.slab || "",
+        volumetricWeight: record.volumetricWeight || 0,
+        forward: record.forwardCharge || 0,
+        chargedToWallet: record.chargedAmount || 0,
+        productDescription: record.productDescription || "",
+      })),
     });
 
     res.json({
@@ -1603,18 +1616,23 @@ const cancelShipping = async (req, res) => {
     // Create refund transaction
     const transaction = await Transaction.create({
       userId: user._id,
-      type: ["wallet", "refund"], // Following schema type (array)
-      amount: refundAmount,
+      type: ["wallet", "refund"], // Types of transaction
+      debitAmount: 0, // No debit because it's a refund
+      creditAmount: refundAmount, // Refund amount
       currency: "INR",
-      balance: user.wallet, // Updated wallet balance
+      balance: user.wallet, // Updated wallet balance after refund
+      transactionMode: "wallet", // Mode is wallet
       description: `Shipping cancellation refund for orders: ${shipping.orderIds.join(
         ", "
       )}`,
       status: "success",
-      transactionMode: "credit", // Since it's a refund
-      transactionId: generateTransactionId(),
-      awbNumber: shipping.awbNumber, // Storing AWB if available
-      shipmentId: shipping.shipmentId, // Storing Shipment ID if available
+      transactionId: generateTransactionId(), // Your transaction id generator
+      shippingDetails: [
+        {
+          awbNumber: shipping.awbNumber || "",
+          shipmentId: shipping.shipmentId || "",
+        },
+      ],
     });
 
     // Update the order status and remove shipping reference
