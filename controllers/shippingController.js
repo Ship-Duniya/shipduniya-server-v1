@@ -121,6 +121,7 @@ const createForwardShipping = async (req, res) => {
     const failedOrders = [];
     const shippingRecords = [];
 
+    // Loop through orders to calculate shipping cost for each order
     for (const order of orders) {
       try {
         const requiredFields = [
@@ -136,10 +137,14 @@ const createForwardShipping = async (req, res) => {
           throw new Error(`Missing fields: ${missingFields.join(", ")}`);
         }
 
+        // Calculate shipping cost for this order
         const shippingCost = calculateShippingCharges(order);
+        if (shippingCost <= 0) {
+          throw new Error("Invalid shipping cost calculated");
+        }
         totalShippingCost += shippingCost;
 
-        // Create shipping entry
+        // Create shipping entry for each order
         const shippingData = {
           userId: order.userId,
           orderIds: [order._id],
@@ -166,7 +171,7 @@ const createForwardShipping = async (req, res) => {
             id: generatePartnerId(normalizedPartner),
             charges: shippingCost,
           },
-          priceForCustomer: totalShippingCost || 0,
+          priceForCustomer: shippingCost,
           status: "pending",
         };
 
@@ -204,8 +209,9 @@ const createForwardShipping = async (req, res) => {
     const transaction = await Transaction.create({
       userId: user._id,
       type: ["wallet", "shipping"],
-      debitAmount: totalShippingCost, // 🚀 debit amount added
-      creditAmount: 0, // 🚀 credit is 0 in this case
+      debitAmount: totalShippingCost, // Total debit for shipping
+      creditAmount: 0, // No credit in this case
+      amount: totalShippingCost, // Total amount for this transaction
       currency: "INR",
       balance: user.wallet,
       transactionMode: "debit", // debit since wallet is charged
@@ -227,6 +233,24 @@ const createForwardShipping = async (req, res) => {
         chargedToWallet: record.chargedAmount || 0,
         productDescription: record.productDescription || "",
       })),
+      // Add the new fields as required
+      paymentType: "wallet",
+      pincode: orders[0].pincode, // Assuming same pincode for all orders
+      city: orders[0].city, // Assuming same city for all orders
+      zone: orders[0].zone || "N/A", // Default if zone is missing
+      originCity: pickupWarehouse.city,
+      originState: pickupWarehouse.state,
+      destinationCity: orders[0].city, // Assuming same for all orders
+      destinationState: orders[0].state, // Assuming same for all orders
+      pickupPincode: pickupWarehouse.pincode,
+
+      // Custom charges
+      freightCharges: 0, // Adjust according to actual logic
+      codCharges: 0, // Adjust accordingly
+      gst: 0, // Adjust accordingly
+      sgst: 0,
+      cgst: 0,
+      totalAmount: totalShippingCost,
     });
 
     res.json({
