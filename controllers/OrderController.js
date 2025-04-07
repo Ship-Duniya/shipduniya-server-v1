@@ -137,7 +137,7 @@ const createForwardOrder = async (req, res) => {
       consigneeAddress2,
       orderType: (orderType || "PREPAID").toUpperCase(),
       pincode: String(pincode),
-      mobile: mobile ? String(mobile) : user.mobile.toString(),
+      mobile: mobile ? String(mobile) : user.mobile,
       orderId: `ORDER-${crypto.randomUUID()}`, // Always generate unique ID
       telephone: telephone ? String(telephone) : "",
       city,
