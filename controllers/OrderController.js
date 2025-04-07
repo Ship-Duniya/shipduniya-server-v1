@@ -13,24 +13,29 @@ const createForwardOrder = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const validateOrder = (order) => {
+    const validateOrder = (order, isBulk) => {
       const errors = [];
-      if (!/^\d{6}$/.test(order.pincode))
-        errors.push("Invalid pincode. Must be a 6-digit number.");
-      if (!/^\d{10}$/.test(order.mobile))
-        errors.push("Invalid mobile number. Must be a 10-digit number.");
+      if (isBulk) {
+        // Bulk-specific validations
+        if (!/^\d{6}$/.test(order.pincode))
+          errors.push("Invalid pincode. Must be a 6-digit number.");
+        if (!/^\d{10}$/.test(order.mobile))
+          errors.push("Invalid mobile number. Must be a 10-digit number.");
+        if (order.declaredValue <= 0)
+          errors.push("Declared value must be greater than 0.");
+        if (order.height <= 0 || order.length <= 0 || order.breadth <= 0)
+          errors.push("Dimensions must be greater than 0.");
+        if (order.actualWeight <= 0)
+          errors.push("Actual weight must be greater than 0.");
+      }
+
+      // Common validations for both bulk and single orders
       if (order.telephone && !/^\d{10}$/.test(order.telephone))
         errors.push("Invalid telephone number. Must be a 10-digit number.");
-      if (order.declaredValue <= 0)
-        errors.push("Declared value must be greater than 0.");
       if (order.collectableValue > order.declaredValue)
         errors.push("Collectable value cannot be greater than declared value.");
       if (order.orderType === "PREPAID" && order.collectableValue > 0)
         errors.push("Collectable value must be 0 for prepaid orders.");
-      if (order.height <= 0 || order.length <= 0 || order.breadth <= 0)
-        errors.push("Dimensions must be greater than 0.");
-      if (order.actualWeight <= 0)
-        errors.push("Actual weight must be greater than 0.");
       return errors;
     };
 
@@ -62,7 +67,7 @@ const createForwardOrder = async (req, res) => {
             orderType: (getCellValue(4) || "PREPAID").toUpperCase(),
             pincode: getCellValue(5),
             mobile: getCellValue(6) || user.mobile.toString(),
-            orderId: `ORDER-${crypto.randomUUID()}`, // Unique order ID
+            orderId: `ORDER-${crypto.randomUUID().replace(/-/g, '').substring(0, 12)}`, // Updated orderId
             telephone: getCellValue(8),
             city: getCellValue(9),
             state: getCellValue(10),
@@ -83,7 +88,7 @@ const createForwardOrder = async (req, res) => {
           order.mobile = order.mobile.toString();
           if (order.telephone) order.telephone = order.telephone.toString();
 
-          const validationErrors = validateOrder(order);
+          const validationErrors = validateOrder(order, true); // Validate as bulk
           if (validationErrors.length > 0) {
             throw new Error(`Row ${rowNumber}: ${validationErrors.join(", ")}`);
           }
@@ -99,12 +104,10 @@ const createForwardOrder = async (req, res) => {
       }
 
       const createdOrders = await Order.insertMany(orders);
-      return res
-        .status(201)
-        .json({
-          message: "Bulk orders created successfully.",
-          orders: createdOrders,
-        });
+      return res.status(201).json({
+        message: "Bulk orders created successfully.",
+        orders: createdOrders,
+      });
     }
 
     // 🔥 Single Order Processing
@@ -138,7 +141,7 @@ const createForwardOrder = async (req, res) => {
       orderType: (orderType || "PREPAID").toUpperCase(),
       pincode: String(pincode),
       mobile: mobile ? String(mobile) : user.mobile,
-      orderId: `ORDER-${crypto.randomUUID()}`, // Always generate unique ID
+      orderId: `ORDER-${crypto.randomUUID().replace(/-/g, '').substring(0, 12)}`, // Updated orderId
       telephone: telephone ? String(telephone) : "",
       city,
       state,
@@ -154,7 +157,7 @@ const createForwardOrder = async (req, res) => {
       actualWeight: Number(actualWeight) || 0,
     };
 
-    const validationErrors = validateOrder(singleOrder);
+    const validationErrors = validateOrder(singleOrder, false); // Validate as single order
     if (validationErrors.length > 0) {
       return res.status(400).json({ error: validationErrors });
     }
