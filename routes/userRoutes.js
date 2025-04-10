@@ -18,6 +18,7 @@ const {
   fetchUserCodRemittanceOrders,
   sendEmailOtp,
   sendPhoneOtp,
+  sendPhoneOtpWithoutCheckingUser,
   verifyEmailOtp,
   verifyPhoneOtp,
   resetPassword,
@@ -82,6 +83,7 @@ router.get(
 // 🔹 New OTP Routes (Replacing Old Ones)
 router.post("/send-email-otp", sendEmailOtp);
 router.post("/send-phone-otp", sendPhoneOtp);
+router.post("/phone-otp", sendPhoneOtpWithoutCheckingUser);
 router.post("/verify-email-otp", verifyEmailOtp);
 router.post("/verify-phone-otp", verifyPhoneOtp);
 
