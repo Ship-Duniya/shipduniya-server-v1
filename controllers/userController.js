@@ -224,30 +224,34 @@ const verifyPhoneOtp = async (req, res) => {
 
 const forgotPassword = async (req, res) => {
   try {
-    const { phone, otp, password } = req.body;
+    const { phone, password } = req.body;
 
-    if (!phone || !otp || !password) {
+    if (!phone || !password) {
       return res
         .status(400)
-        .json({ success: false, message: "Phone, OTP, and new password are required." });
-    }
-
-    // Verify OTP
-    const otpRecord = await OtpModel.findOne({ phone, type: "phone", verified: false });
-    if (!otpRecord || otpRecord.otp != otp) {
-      return res.status(400).json({ success: false, message: "Invalid or expired OTP." });
+        .json({
+          success: false,
+          message: "Phone and new password are required.",
+        });
     }
 
     // Find user by phone number
     const user = await User.findOne({ phone });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
     }
 
     // Check if the new password is same as the old password
     const isSamePassword = await bcrypt.compare(password, user.password);
     if (isSamePassword) {
-      return res.status(400).json({ success: false, message: "New password must be different from the old password." });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "New password must be different from the old password.",
+        });
     }
 
     // Hash new password
@@ -258,14 +262,14 @@ const forgotPassword = async (req, res) => {
     user.password = hashedPassword;
     await user.save();
 
-    // Mark OTP as verified (optional but better for security)
-    otpRecord.verified = true;
-    await otpRecord.save();
-
-    res.status(200).json({ success: true, message: "Password reset successfully." });
+    res
+      .status(200)
+      .json({ success: true, message: "Password reset successfully." });
   } catch (error) {
     console.error("Error resetting password:", error);
-    res.status(500).json({ success: false, message: "Failed to reset password." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to reset password." });
   }
 };
 
