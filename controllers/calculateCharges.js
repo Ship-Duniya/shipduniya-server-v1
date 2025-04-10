@@ -290,7 +290,6 @@ async function calculateShippingCharges(req, res) {
         .json({ message: "Could not determine origin pincode." });
     }
 
-    // Normalize carrier name for Ecom Express
     let requestedCarrier = carrierName?.toLowerCase().trim();
     if (requestedCarrier === "ecom express") {
       requestedCarrier = "ecom";
@@ -314,14 +313,13 @@ async function calculateShippingCharges(req, res) {
 
       if (!destinationPincode || isNaN(chargeableWeight)) continue;
 
-      // Fetch carrier charges based on the order type (COD or prepaid)
       const carrierResponse = await getCarrierCharges(
         requestedCarrier,
         originPincode,
         destinationPincode,
         chargeableWeight,
         CODAmount,
-        productType, // Pass the normalized product type
+        productType,
         height,
         breadth,
         length
@@ -340,13 +338,21 @@ async function calculateShippingCharges(req, res) {
           const freightCharge = baseFreight * multiplier;
           const otherChargesTotal = otherCharges * multiplier;
 
-          const serviceKey = `${service.name}|${totalPrice.toFixed(2)}`;
+          const carrierNameFormatted =
+            requestedCarrier.charAt(0).toUpperCase() + requestedCarrier.slice(1);
+          const serviceKey = `${carrierNameFormatted}|${service.name}`;
 
-          if (!uniqueServices.has(serviceKey)) {
+          if (uniqueServices.has(serviceKey)) {
+            // Accumulate charges for existing service
+            const existing = uniqueServices.get(serviceKey);
+            existing.totalPrice += totalPrice;
+            existing.codCharge += codCharge;
+            existing.freightCharge += freightCharge;
+            existing.otherCharges += otherChargesTotal;
+          } else {
+            // Create new service entry
             uniqueServices.set(serviceKey, {
-              carrierName:
-                requestedCarrier.charAt(0).toUpperCase() +
-                requestedCarrier.slice(1), // Capitalize first letter
+              carrierName: carrierNameFormatted,
               serviceType: service.name,
               totalPrice: totalPrice,
               codCharge: codCharge,
@@ -383,7 +389,7 @@ async function fetchOrderDetails(orderId) {
       parseFloat(order.volumetricWeight) || parseFloat(order.actualWeight),
     CODAmount: parseFloat(order.collectableValue) || 0,
     pincode: order.pincode,
-    productType: order.orderType.toLowerCase(), // Include orderType
+    productType: order.orderType.toLowerCase(),
     height: order.height,
     breadth: order.breadth,
     length: order.length,
@@ -403,13 +409,7 @@ async function getCarrierCharges(
 ) {
   switch (carrier) {
     case "ecom":
-      return getEcomCharges(
-        origin,
-        destination,
-        weight,
-        codAmount,
-        productType
-      );
+      return getEcomCharges(origin, destination, weight, codAmount, productType);
     case "xpressbees":
       return getXpressbeesCharges(
         origin,
