@@ -21,15 +21,20 @@ const twilioClient = twilio(
 const sendPhoneOtp = async (req, res) => {
   try {
     const { phone } = req.body;
-    if (!phone) return res.status(400).json({ success: false, message: "Phone number is required." });
+    if (!phone)
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number is required." });
 
     // Check if phone number is already registered
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
-      return res.status(400).json({ success: false, message: "Phone number already registered." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number already registered." });
     }
 
-    const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
+    const otp = Math.floor(1000 + Math.random() * 9000);
 
     // Store OTP in the database
     await OtpModel.updateOne(
@@ -42,7 +47,7 @@ const sendPhoneOtp = async (req, res) => {
       method: "POST",
       url: "https://www.fast2sms.com/dev/bulkV2",
       headers: {
-        authorization: process.env.FAST2SMS_API_KEY, // Store API key in env file
+        authorization: process.env.FAST2SMS_API_KEY,
         "Content-Type": "application/json",
       },
       data: {
@@ -57,7 +62,54 @@ const sendPhoneOtp = async (req, res) => {
     console.log("OTP sent successfully:", response.data);
     res.status(200).json({ success: true, message: "OTP sent successfully." });
   } catch (error) {
-    console.error("Error sending OTP:", error.response ? error.response.data : error.message);
+    console.error(
+      "Error sending OTP:",
+      error.response ? error.response.data : error.message
+    );
+    res.status(500).json({ success: false, message: "Failed to send OTP." });
+  }
+};
+
+const sendPhoneOtpWithoutCheckingUser = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone)
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number is required." });
+
+    const otp = Math.floor(1000 + Math.random() * 9000);
+
+    // Store OTP in the database
+    await OtpModel.updateOne(
+      { phone, type: "phone" },
+      { otp, verified: false, createdAt: new Date() },
+      { upsert: true }
+    );
+
+    const options = {
+      method: "POST",
+      url: "https://www.fast2sms.com/dev/bulkV2",
+      headers: {
+        authorization: process.env.FAST2SMS_API_KEY,
+        "Content-Type": "application/json",
+      },
+      data: {
+        message: `You requested to reset your password on Shipduniya. Your OTP code is ${otp}.`,
+        language: "english",
+        route: "q",
+        numbers: phone,
+      },
+    };
+
+    const response = await axios.request(options);
+    console.log("OTP sent successfully:", response.data);
+    res.status(200).json({ success: true, message: "OTP sent successfully." });
+  } catch (error) {
+    console.error(
+      "Error sending OTP:",
+      error.response ? error.response.data : error.message
+    );
     res.status(500).json({ success: false, message: "Failed to send OTP." });
   }
 };
@@ -65,12 +117,17 @@ const sendPhoneOtp = async (req, res) => {
 const sendEmailOtp = async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email is required." });
+    if (!email)
+      return res
+        .status(400)
+        .json({ success: false, message: "Email is required." });
 
     // Check if email is already registered
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ success: false, message: "Email ID already registered." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email ID already registered." });
     }
 
     const emailOtp = Math.floor(1000 + Math.random() * 9000);
@@ -79,7 +136,13 @@ const sendEmailOtp = async (req, res) => {
     // Save OTP in the database
     await OtpModel.findOneAndUpdate(
       { email, type: "email" },
-      { email, otp: emailOtp, type: "email", verified: false, createdAt: new Date() },
+      {
+        email,
+        otp: emailOtp,
+        type: "email",
+        verified: false,
+        createdAt: new Date(),
+      },
       { upsert: true, new: true }
     );
 
@@ -99,10 +162,14 @@ const sendEmailOtp = async (req, res) => {
       text: `Welcome to Shipduniya!!\nYour OTP for email verification is ${emailOtp}. It expires in 10 minutes.`,
     });
 
-    res.status(200).json({ success: true, message: "Email OTP sent successfully." });
+    res
+      .status(200)
+      .json({ success: true, message: "Email OTP sent successfully." });
   } catch (error) {
     console.error("Error sending email OTP:", error);
-    res.status(500).json({ success: false, message: "Error sending OTP. Try again later." });
+    res
+      .status(500)
+      .json({ success: false, message: "Error sending OTP. Try again later." });
   }
 };
 
@@ -160,7 +227,9 @@ const forgotPassword = async (req, res) => {
     const { phone, password } = req.body;
 
     if (!phone || !password) {
-      return res.status(400).json({ message: "Phone and new password are required." });
+      return res
+        .status(400)
+        .json({ message: "Phone and new password are required." });
     }
 
     // Find the user by phone number
@@ -234,7 +303,6 @@ const registerUser = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-    
 
     // Delete OTP records after successful registration
     await OtpModel.deleteMany({ email, phone });
@@ -275,7 +343,6 @@ const loginUser = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-    
 
     res.json({
       _id: user._id,
@@ -856,6 +923,7 @@ module.exports = {
   fetchUserCodRemittanceOrders,
   sendEmailOtp,
   sendPhoneOtp,
+  sendPhoneOtpWithoutCheckingUser,
   verifyEmailOtp,
   verifyPhoneOtp,
   forgotPassword,
