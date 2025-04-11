@@ -80,6 +80,7 @@ const shippingSchema = new mongoose.Schema(
         "rtc",
         "cancelled",
         "lost",
+        "booked"
       ],
       default: "pending",
     },
