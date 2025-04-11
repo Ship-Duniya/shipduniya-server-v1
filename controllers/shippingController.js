@@ -16,6 +16,12 @@ const {
 const axios = require("axios");
 
 const getCharges = (customerType, deliveryPartnerName, cod, freight) => {
+  // Skip validation for Xpressbees
+  if (deliveryPartnerName.toLowerCase() === "xpressbees") {
+    const total_charges = freight + cod; // Simplified calculation for Xpressbees
+    return total_charges;
+  }
+
   const customerCharge = chargeSheet.find(
     (sheet) => sheet.customerType === customerType
   );
@@ -35,13 +41,12 @@ const getCharges = (customerType, deliveryPartnerName, cod, freight) => {
     );
     return null;
   }
+
   const total_charges = partner.freight * freight + cod * partner.codPercentage;
   return total_charges;
 };
 
-// Utility functions for shipping operations
 const generateAWB = (partner) => {
-  // Partner-specific AWB generation logic
   const partnerPrefix =
     {
       xpressbees: "XB",
@@ -50,7 +55,7 @@ const generateAWB = (partner) => {
     }[partner.toLowerCase()] || "XX";
 
   const randomDigits = Math.floor(100000000000 + Math.random() * 900000000000);
-  return `${partnerPrefix}${randomDigits}`.slice(0, 12); // 12-character AWB
+  return `${partnerPrefix}${randomDigits}`.slice(0, 12);
 };
 
 const generateShipmentId = () => {
@@ -58,7 +63,6 @@ const generateShipmentId = () => {
 };
 
 const calculateShippingCharges = (order) => {
-  // Example pricing logic (replace with your actual business logic)
   const baseCharge = 50;
   const weightCharge = order.actualWeight * 10;
   return baseCharge + weightCharge;
@@ -70,16 +74,206 @@ const generatePartnerId = (partner) => {
   )}`;
 };
 
-// Updated controller with implemented functions
+const fetchCityStateFromPincode = async (pincode) => {
+  try {
+    const response = await axios.get(`https://api.postalpincode.in/pincode/${pincode}`);
+    const data = response.data;
+
+    if (data[0].Status === "Success") {
+      const { District: city, State: state } = data[0].PostOffice[0];
+      return { city, state };
+    } else {
+      throw new Error(`Invalid pincode: ${pincode}`);
+    }
+  } catch (error) {
+    console.error(`Error fetching city/state for pincode ${pincode}:`, error.message);
+    throw new Error("Failed to fetch city and state from pincode.");
+  }
+};
+
+const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, selectedService) => {
+  try {
+    const token = await getXpressbeesToken();
+
+    if (!token) {
+      throw new Error("Failed to fetch Xpressbees token");
+    }
+
+    // Map orderType to paymentMethod
+    const paymentType = order.orderType.toLowerCase() === "cod" ? "cod" : "prepaid";
+
+    // Fetch city and state from pincode if missing
+    if (!pickupWarehouse.city || !pickupWarehouse.state) {
+      const { city, state } = await fetchCityStateFromPincode(pickupWarehouse.pincode);
+      pickupWarehouse.city = city;
+      pickupWarehouse.state = state;
+    }
+
+    // Validate selectedService
+    if (!selectedService) {
+      throw new Error("Selected service is required for booking");
+    }
+
+    // Construct payload
+    const payload = {
+      order_number: order.orderId,
+      unique_order_number: "no",
+      shipping_charges: shippingCost,
+      discount: 0,
+      cod_charges: 0,
+      payment_type: paymentType,
+      order_amount: shippingCost,
+      package_weight: order.actualWeight,
+      package_length: order.length,
+      package_breadth: order.breadth,
+      package_height: order.height,
+      request_auto_pickup: "yes",
+      service_type: selectedService, // Include selected service type
+      consignee: {
+        name: order.consignee,
+        address: order.consigneeAddress1,
+        address_2: order.consigneeAddress2 || "",
+        city: order.city,
+        state: order.state,
+        pincode: order.pincode,
+        phone: order.mobile,
+      },
+      pickup: {
+        warehouse_name: pickupWarehouse.name || "Default Warehouse",
+        name: pickupWarehouse.managerName || "Warehouse Manager",
+        address: pickupWarehouse.address || "Default Address",
+        city: pickupWarehouse.city,
+        state: pickupWarehouse.state,
+        pincode: pickupWarehouse.pincode,
+        phone: pickupWarehouse.managerMobile || "0000000000",
+      },
+      order_items: [
+        {
+          name: order.itemDescription || "Item",
+          qty: order.quantity,
+          price: order.declaredValue,
+          sku: order.orderId,
+        },
+      ],
+      collectable_amount: paymentType === "cod" ? order.collectableValue : 0,
+    };
+
+    // Log the payload for debugging
+    console.log("Payload sent to Xpressbees API:", JSON.stringify(payload, null, 2));
+
+    // Make API request
+    const response = await axios.post(
+      "https://shipment.xpressbees.com/api/shipments2",
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Log the full response for debugging
+    console.log("Full Response from Xpressbees API:", JSON.stringify(response.data, null, 2));
+
+    // Validate the response
+    if (!response.data || !response.data.status || !response.data.data) {
+      throw new Error("Invalid response from Xpressbees API");
+    }
+
+    const responseData = response.data.data;
+
+    // Log the selected courier name for debugging
+    console.log("Selected Courier Name from API:", responseData.courier_name);
+
+    return {
+      success: true,
+      awb: responseData.awb_number,
+      shipmentId: responseData.shipment_id,
+      labelUrl: responseData.label,
+      tracking_url: responseData.tracking_url || null,
+      partnerData: responseData,
+    };
+  } catch (error) {
+    // Log the error response for debugging
+    console.error("Xpressbees API Error:", {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    });
+
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+    };
+  }
+};
+
+const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, selectedService) => {
+  try {
+    const token = await getDelhiveryToken();
+    const formData = new FormData();
+    
+    formData.append("client_name", process.env.DELHIVERY_CLIENT_NAME);
+    formData.append("pickup_location", pickupWarehouse.pincode);
+    formData.append("shipment", JSON.stringify({
+      shipments: [{
+        waybill: order.orderId,
+        name: order.consignee,
+        phone: order.mobile,
+        pin: order.pincode,
+        payment_mode: "Prepaid",
+        order_date: new Date().toISOString(),
+        total_amount: order.declaredValue,
+        products_desc: order.itemDescription,
+        quantity: order.quantity,
+        consignee_address: order.consigneeAddress1,
+        consignee_city: order.city,
+        consignee_state: order.state,
+        weight: order.actualWeight,
+        service_type: selectedService // Include selected service type
+      }]
+    }));
+
+    const response = await axios.post(
+      "https://staging-express.delhivery.com/api/cmu/create.json",
+      formData,
+      {
+        headers: {
+          Authorization: `Token ${token}`,
+          ...formData.getHeaders(),
+        },
+      }
+    );
+
+    return {
+      success: true,
+      awb: response.data.waybill,
+      shipmentId: response.data.shipment_id,
+      tracking_url: `https://www.delhivery.com/track/${response.data.waybill}`,
+      partnerData: response.data,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+    };
+  }
+};
+
 const createForwardShipping = async (req, res) => {
   try {
     const userId = req.user.id;
     const { orderIds, pickup, rto, selectedPartner } = req.body;
 
-    // Validate partner selection
-    const normalizedPartner = selectedPartner
-      .toLowerCase()
-      .includes("xpressbees")
+    // Automatically set selectedService based on selectedPartner
+    const selectedService = selectedPartner;
+
+    // Log the selected service for debugging
+    console.log("Selected Service:", selectedService);
+
+    // Normalize partner name
+    const normalizedPartner = selectedPartner.toLowerCase().includes("xpressbees")
       ? "xpressbees"
       : selectedPartner.toLowerCase().includes("delhivery")
       ? "delhivery"
@@ -89,195 +283,74 @@ const createForwardShipping = async (req, res) => {
       return res.status(400).json({ message: "Invalid shipping partner" });
     }
 
-    // Validate order existence
     const orders = await Order.find({ _id: { $in: orderIds } });
     if (orders.length !== orderIds.length) {
       return res.status(404).json({ message: "Some orders not found" });
     }
 
-    // Validate warehouse data
     const [pickupWarehouse, rtoWarehouse] = await Promise.all([
       Warehouse.findById(pickup),
       Warehouse.findById(rto),
     ]);
 
-    const validateWarehouse = (warehouse) => {
-      if (!warehouse) throw new Error("Warehouse not found");
-      if (!/^\d{6}$/.test(warehouse.pincode))
-        throw new Error("Invalid warehouse pincode");
-    };
-
-    validateWarehouse(pickupWarehouse);
-    validateWarehouse(rtoWarehouse);
-
-    // Fetch user and validate wallet balance
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
     let totalShippingCost = 0;
     const processedOrders = [];
     const failedOrders = [];
-    const shippingRecords = [];
 
-    // Loop through orders to calculate shipping cost for each order
     for (const order of orders) {
       try {
-        const requiredFields = [
-          "consignee",
-          "consigneeAddress1",
-          "city",
-          "state",
-          "pincode",
-          "mobile",
-        ];
-        const missingFields = requiredFields.filter((field) => !order[field]);
-        if (missingFields.length > 0) {
-          throw new Error(`Missing fields: ${missingFields.join(", ")}`);
-        }
-
-        // Calculate shipping cost for this order
         const shippingCost = calculateShippingCharges(order);
-        if (shippingCost <= 0) {
-          throw new Error("Invalid shipping cost calculated");
+
+        let carrierResponse;
+        switch (normalizedPartner) {
+          case "xpressbees":
+            carrierResponse = await createXpressbeesShipment(
+              order,
+              pickupWarehouse,
+              shippingCost,
+              selectedService // Pass the derived selected service
+            );
+            break;
+          case "delhivery":
+            carrierResponse = await createDelhiveryShipment(
+              order,
+              pickupWarehouse,
+              shippingCost,
+              selectedService // Pass the derived selected service
+            );
+            break;
+          default:
+            throw new Error("Unsupported carrier");
         }
-        totalShippingCost += shippingCost;
 
-        // Create shipping entry for each order
-        const shippingData = {
-          userId: order.userId,
-          orderIds: [order._id],
-          warehouseId: pickupWarehouse._id,
-          consignee: order.consignee,
-          awbNumber: generateAWB(normalizedPartner),
-          shipmentId: generateShipmentId(),
-          pickupAddress: {
-            name: pickupWarehouse.name,
-            mobile: pickupWarehouse.managerMobile,
-            pincode: pickupWarehouse.pincode,
-            addressLine1: pickupWarehouse.address,
-            addressLine2: "",
-          },
-          returnAddress: {
-            name: rtoWarehouse.name,
-            mobile: rtoWarehouse.managerMobile,
-            pincode: rtoWarehouse.pincode,
-            addressLine1: rtoWarehouse.address,
-            addressLine2: "",
-          },
-          partnerDetails: {
-            name: normalizedPartner,
-            id: generatePartnerId(normalizedPartner),
-            charges: shippingCost,
-          },
-          priceForCustomer: shippingCost,
-          status: "pending",
-        };
-
-        const shipping = await Shipping.create(shippingData);
-        shippingRecords.push({
-          orderId: order._id,
-          awbNumber: shippingData.awbNumber,
-          shipmentId: shippingData.shipmentId,
-        });
-
-        await Order.findByIdAndUpdate(order._id, {
-          shipped: true,
-          shipping: shipping._id,
-        });
+        if (!carrierResponse.success) {
+          throw new Error(`Carrier API failed: ${carrierResponse.error}`);
+        }
 
         processedOrders.push(order._id);
       } catch (error) {
-        failedOrders.push({ orderId: order._id, error: error.message });
+        failedOrders.push({
+          orderId: order._id,
+          error: error.message,
+        });
       }
     }
 
-    // Ensure the user has enough balance before deducting
-    if (user.wallet < totalShippingCost) {
-      return res.status(400).json({ message: "Insufficient wallet balance" });
-    }
-
-    // Deduct wallet amount **only once**
-    user.wallet -= totalShippingCost;
-    await user.save();
-
-    // Generate **single** transaction ID
-    const transactionId = generateTransactionId();
-
-    // Create **one** transaction for the entire shipping process
-    const transaction = await Transaction.create({
-      userId: user._id,
-      type: ["wallet", "shipping"],
-      debitAmount: totalShippingCost, // Total debit for shipping
-      creditAmount: 0, // No credit in this case
-      amount: totalShippingCost, // Total amount for this transaction
-      currency: "INR",
-      balance: user.wallet,
-      transactionMode: "debit", // debit since wallet is charged
-      description: `Shipping charges deducted for orders: ${processedOrders.join(
-        ", "
-      )}`,
-      status: "success",
-      transactionId: transactionId,
-      shippingDetails: shippingRecords.map((record) => ({
-        awbNumber: record.awbNumber,
-        shipmentId: record.shipmentId,
-        courier: normalizedPartner,
-        weight: record.weight || 0,
-        length: record.length || 0,
-        height: record.height || 0,
-        slab: record.slab || "",
-        volumetricWeight: record.volumetricWeight || 0,
-        forward: record.forwardCharge || 0,
-        chargedToWallet: record.chargedAmount || 0,
-        productDescription: record.productDescription || "",
-      })),
-      // Add the new fields as required
-      paymentType: "wallet",
-      pincode: orders[0].pincode, // Assuming same pincode for all orders
-      city: orders[0].city, // Assuming same city for all orders
-      zone: orders[0].zone || "N/A", // Default if zone is missing
-      originCity: pickupWarehouse.city,
-      originState: pickupWarehouse.state,
-      destinationCity: orders[0].city, // Assuming same for all orders
-      destinationState: orders[0].state, // Assuming same for all orders
-      pickupPincode: pickupWarehouse.pincode,
-
-      // Custom charges
-      freightCharges: 0, // Adjust according to actual logic
-      codCharges: 0, // Adjust accordingly
-      gst: 0, // Adjust accordingly
-      sgst: 0,
-      cgst: 0,
-      totalAmount: totalShippingCost,
-    });
-
     res.json({
-      message: "Bulk shipping processing completed",
+      message: "Bulk shipping processed",
       successCount: processedOrders.length,
       failedCount: failedOrders.length,
       processedOrders,
       failedOrders,
-      transactionId: transaction._id,
     });
   } catch (error) {
+    console.error("Shipping Controller Error:", error.message);
     res.status(500).json({
       message: "Server error during shipping creation",
       error: error.message,
     });
   }
 };
-
-function generateTransactionId() {
-  // Generate a random string using crypto
-  const randomBytes = crypto.randomBytes(8).toString("hex"); // Generates 16 characters of random hex (8 bytes)
-
-  // Combine the random bytes with the timestamp to create a unique transaction ID
-  const transactionId = `txn_${randomBytes}`;
-
-  return transactionId;
-}
 
 const createReverseShipping = async (req, res) => {
   const { orderIds } = req.body; // Check if it's bulk shipping and include orders in the request
@@ -492,50 +565,6 @@ const getShippings = async (req, res) => {
   }
 };
 
-// const getAllShipments = (_, res) =>{
-//   const response =
-// }
-// const getAwbDetails = async (req, res) => {
-//   const { id } = req.params; // Extract the AWB number from the query parameters
-
-//   if (!id) {
-//     return res.status(400).json({ error: 'AWB number is required' });
-//   }
-
-//   try {
-//     const data = new FormData();
-//     data.append('username', "internaltest_staging");
-//     data.append('password', "@^2%d@xhH^=9xK4U");
-//     data.append('awb', id);
-
-//     const config = {
-//       method: 'get',
-//       maxBodyLength: Infinity,
-//       url: 'https://clbeta.ecomexpress.in/track_me/api/mawbd/',
-//       headers: {
-//         ...data.getHeaders(),
-//       },
-//       data: data,
-//     };
-
-//     const response = await axios(config);
-
-//     return res.status(200).json(response.data);
-//   } catch (error) {
-//     console.error('Error fetching AWB details:', error.message);
-//     return res.status(500).json({
-//       error: 'An error occurred while fetching AWB details',
-//       details: error.message,
-//     });
-//   }
-// };
-
-/**
- * Fetch COD remittance orders for the authenticated user.
- * @param {Object} req - Express request object.
- * @param {Object} res - Express response object.
- * @returns {void}
- */
 /**
  * Fetch COD remittance orders for the authenticated user.
  * @param {Object} req - Express request object.
@@ -1682,7 +1711,6 @@ const cancelShipping = async (req, res) => {
 };
 
 module.exports = {
-  // createShipping,
   createForwardShipping,
   createReverseShipping,
   getUserShipments,
