@@ -548,7 +548,6 @@ async function getDelhiveryCharges(origin, destination, weight, codAmount, produ
       services: combinedServices,
     };
   } catch (error) {
-    // Log the error details for debugging
     console.error("❌ Error fetching Delhivery charges:", error.message);
     console.error("❌ Error Details:", error.response?.data || error);
     return null;
