@@ -3,8 +3,7 @@ const bwipjs = require("bwip-js");
 const path = require("path");
 
 const storage = new Storage({
-  keyFilename: process.env.GCP_KEY_FILE_PATH || // Use env variable first
-    path.join(__dirname, "../services/ship-duniya-labeling-key.json"),
+  keyFilename: process.env.GCP_KEY_FILE_PATH,
   projectId: process.env.GCP_PROJECT_ID // Add project ID
 });
 
