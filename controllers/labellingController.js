@@ -2,17 +2,24 @@ const { Storage } = require("@google-cloud/storage");
 const bwipjs = require("bwip-js");
 const path = require("path");
 
+// Parse the GCP_KEY_JSON environment variable as JSON
+let keyJson;
+try {
+  keyJson = JSON.parse(process.env.GCP_KEY_JSON);
+} catch (error) {
+  console.error("Failed to parse GCP_KEY_JSON:", error.message);
+  throw new Error("Invalid GCP_KEY_JSON environment variable. Ensure it contains valid JSON.");
+}
+
 const storage = new Storage({
-  keyFilename: process.env.GCP_KEY_FILE_PATH,
-  projectId: process.env.GCP_PROJECT_ID // Add project ID
+  credentials: keyJson,
+  projectId: process.env.GCP_PROJECT_ID,
 });
 
 const bucketName = process.env.GCP_BUCKET_NAME;
 
-if (!bucketName || !process.env.GCP_KEY_FILE_PATH) {
-  throw new Error(
-    "GCP bucket name or key file path is missing in environment variables."
-  );
+if (!bucketName) {
+  throw new Error("GCP bucket name is missing in environment variables.");
 }
 
 const generateBulkLabels = async (req, res) => {
