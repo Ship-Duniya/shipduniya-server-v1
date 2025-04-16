@@ -3,15 +3,16 @@ const bwipjs = require("bwip-js");
 const path = require("path");
 
 const storage = new Storage({
-  credentials: JSON.parse(process.env.GCP_SA_KEY_JSON_LABEL || "{}"), // Use the labeling key secret here
-  projectId: process.env.GCP_PROJECT_ID, // Project ID
+  keyFilename: process.env.GCP_KEY_FILE_PATH || // Use env variable first
+    path.join(__dirname, "../services/ship-duniya-labeling-key.json"),
+  projectId: process.env.GCP_PROJECT_ID // Add project ID
 });
 
 const bucketName = process.env.GCP_BUCKET_NAME;
 
-if (!bucketName || !process.env.GCP_SA_KEY_JSON_LABEL) {
+if (!bucketName || !process.env.GCP_KEY_FILE_PATH) {
   throw new Error(
-    "GCP bucket name or labeling key file content is missing in environment variables."
+    "GCP bucket name or key file path is missing in environment variables."
   );
 }
 

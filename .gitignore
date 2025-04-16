@@ -6,4 +6,3 @@
 
 # Ignore all PDF invoices
 /invoices/*.pdf
-services/keys/*.json
