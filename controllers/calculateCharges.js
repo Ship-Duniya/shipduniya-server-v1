@@ -222,10 +222,30 @@ async function calculateCharges(req, res) {
   }
 }
 
-async function calculateShippingCharges(req, res) {
-  const { orderIds, pickUpWareHouse, returnWarehouse, carrierName } = req.body;
-
+const calculateShippingCharges = async (req, res) => {
   try {
+    const {
+      chargeableWeight,
+      CODAmount = 0,
+      productType,
+      originPincode,
+      destinationPincode,
+      height: reqHeight,
+      breadth: reqBreadth,
+      length: reqLength,
+    } = req.body;
+
+    // Validate required fields
+    if (
+      !chargeableWeight ||
+      !productType ||
+      !originPincode ||
+      !destinationPincode
+    ) {
+      return res.status(400).json({ error: "Missing required parameters" });
+    }
+
+    // Get user profile and customer type
     const userId = req.user.id;
     const userProfile = await User.findById(userId);
     if (!userProfile) {
@@ -234,50 +254,44 @@ async function calculateShippingCharges(req, res) {
 
     const customerType = userProfile.customerType.toLowerCase();
 
-    let originPincode;
-    if (pickUpWareHouse === "Ship Duniya") {
-      originPincode = "201301";
-    } else {
-      if (!mongoose.Types.ObjectId.isValid(pickUpWareHouse)) {
-        return res
-          .status(400)
-          .json({ message: "Invalid pickup warehouse ID." });
+    // Fetch order details to get dimensions if not provided
+    const orderId = req.body.orderId; // Assuming `orderId` is passed in the request body
+    let height = reqHeight || 10;
+    let breadth = reqBreadth || 10;
+    let length = reqLength || 10;
+
+    if (orderId) {
+      const order = await Order.findById(orderId);
+      if (order) {
+        height = order.height || height;
+        breadth = order.breadth || breadth;
+        length = order.length || length;
       }
-      const warehouse = await Warehouse.findById(pickUpWareHouse);
-      originPincode = warehouse?.pincode;
     }
 
-    if (!originPincode) {
-      return res
-        .status(400)
-        .json({ message: "Could not determine origin pincode." });
-    }
+    // Utility function to get multipliers
+    const getMultiplier = (carrier, customerType) => {
+      const multiplierMaps = {
+        xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
+        delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+        ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+        default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+      };
 
-    let requestedCarrier = carrierName?.toLowerCase().trim();
-    if (requestedCarrier === "ecom express") {
-      requestedCarrier = "ecom";
-    }
+      const carrierKey = carrier.toLowerCase();
+      return (
+        multiplierMaps[carrierKey]?.[customerType] ||
+        multiplierMaps.default[customerType] ||
+        1
+      );
+    };
 
-    const uniqueServices = new Map();
+    const chargesBreakdown = [];
 
-    for (const orderId of orderIds) {
-      const orderDetails = await fetchOrderDetails(orderId);
-      if (!orderDetails) continue;
-
-      const {
-        chargeableWeight,
-        CODAmount,
-        productType,
-        pincode: destinationPincode,
-        height,
-        breadth,
-        length,
-      } = orderDetails;
-
-      if (!destinationPincode || isNaN(chargeableWeight)) continue;
-
-      const carrierResponse = await getCarrierCharges(
-        requestedCarrier,
+    // Fetch dynamic rates from carrier APIs
+    const apiPromises = [
+      // Xpressbees
+      getXpressbeesCharges(
         originPincode,
         destinationPincode,
         chargeableWeight,
@@ -286,50 +300,86 @@ async function calculateShippingCharges(req, res) {
         height,
         breadth,
         length
-      );
+      ),
 
-      if (carrierResponse?.services) {
-        carrierResponse.services.forEach((service) => {
-          const multiplier = getMultiplier(requestedCarrier, customerType);
-          const baseTotal = service.total_charges || 0;
-          const baseCod = service.cod_charge || 0;
-          const baseFreight = service.freight_charge || 0;
-          const otherCharges = baseTotal - baseCod - baseFreight;
+      // Delhivery
+      getDelhiveryCharges(
+        originPincode,
+        destinationPincode,
+        chargeableWeight,
+        CODAmount,
+        productType
+      ),
 
-          const totalPrice = baseTotal * multiplier;
-          const codCharge = baseCod * multiplier;
-          const freightCharge = baseFreight * multiplier;
-          const otherChargesTotal = otherCharges * multiplier;
+      // Ecom
+      getEcomCharges(
+        originPincode,
+        destinationPincode,
+        chargeableWeight,
+        CODAmount,
+        productType
+      ),
+    ];
 
-          const carrierNameFormatted =
-            requestedCarrier.charAt(0).toUpperCase() + requestedCarrier.slice(1);
-          const serviceKey = `${carrierNameFormatted}|${service.name}`;
+    const [xpressbeesCharges, delhiveryCharges, ecomCharges] =
+      await Promise.all(apiPromises);
 
-          if (uniqueServices.has(serviceKey)) {
-            // Accumulate charges for existing service
-            const existing = uniqueServices.get(serviceKey);
-            existing.totalPrice += totalPrice;
-            existing.codCharge += codCharge;
-            existing.freightCharge += freightCharge;
-            existing.otherCharges += otherChargesTotal;
-          } else {
-            // Create new service entry
-            uniqueServices.set(serviceKey, {
-              carrierName: carrierNameFormatted,
-              serviceType: service.name,
-              totalPrice: totalPrice,
-              codCharge: codCharge,
-              freightCharge: freightCharge,
-              otherCharges: otherChargesTotal,
-            });
-          }
+    // Process Xpressbees charges
+    if (xpressbeesCharges?.services) {
+      const multiplier = getMultiplier("xpressbees", customerType);
+      xpressbeesCharges.services.forEach((service) => {
+        const baseCod = service.cod_charges || 0;
+        const baseFreight = service.freight_charges || 0;
+        const baseTotal = service.total_charges || 0;
+
+        chargesBreakdown.push({
+          carrierName: "Xpressbees",
+          serviceType: service.name,
+          totalPrice: baseTotal * multiplier,
+          codCharge: baseCod * multiplier,
+          freightCharge: baseFreight * multiplier,
+          otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
         });
-      }
+      });
     }
 
-    const chargesBreakdown = Array.from(uniqueServices.values()).sort(
-      (a, b) => a.totalPrice - b.totalPrice
-    );
+    // Process Delhivery charges
+    if (delhiveryCharges?.services) {
+      const multiplier = getMultiplier("delhivery", customerType);
+      delhiveryCharges.services.forEach((service) => {
+        const baseCod = service.cod_charge || 0;
+        const baseFreight = service.freight_charge || 0;
+        const baseTotal = service.total_charges || 0;
+
+        chargesBreakdown.push({
+          carrierName: "Delhivery",
+          serviceType: service.name,
+          totalPrice: baseTotal * multiplier,
+          codCharge: baseCod * multiplier,
+          freightCharge: baseFreight * multiplier,
+          otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
+        });
+      });
+    }
+
+    // Process Ecom charges
+    if (ecomCharges?.services) {
+      const multiplier = getMultiplier("ecom", customerType);
+      ecomCharges.services.forEach((service) => {
+        const baseTotal = service.total_charges || 0;
+        const baseCod = service.cod_charge || 0;
+        const baseFreight = service.freight_charge || 0;
+
+        chargesBreakdown.push({
+          carrierName: "Ecom",
+          serviceType: service.name,
+          totalPrice: baseTotal * multiplier,
+          codCharge: baseCod * multiplier,
+          freightCharge: baseFreight * multiplier,
+          otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
+        });
+      });
+    }
 
     res.json({
       message: "Shipping charges calculated successfully.",
@@ -342,7 +392,7 @@ async function calculateShippingCharges(req, res) {
       error: error.message,
     });
   }
-}
+};
 
 async function fetchOrderDetails(orderId) {
   const order = await Order.findById(orderId);
