@@ -25,7 +25,8 @@ const getXpressbeesToken = async () => {
       email: process.env.XPRESSBEES_EMAIL,
       password: process.env.XPRESSBEES_PASSWORD,
     });
-    return response.data.token; // Assuming the token is returned as `data.token`
+    const token = response.data;
+    return token.data;
   } catch (error) {
     console.error("Error fetching Xpressbees token:", error.message);
     throw new Error("Failed to authenticate with Xpressbees.");
@@ -79,6 +80,7 @@ const fetchTrackingDetails = async (courier, awb) => {
  */
 const trackShipment = async (req, res) => {
   const { awb } = req.params;
+  console.log("AWB:", awb); // Log the AWB number for debugging
 
   try {
     const courier = determineCourier(awb); // Automatically determine courier
