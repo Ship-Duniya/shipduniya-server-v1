@@ -261,6 +261,69 @@ const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, sel
   }
 };
 
+const safe = (val, def = "") => (val !== undefined && val !== null ? val : def);
+
+const buildShippingData = (order, pickupWarehouse, rtoWarehouse, shippingCost, carrierResponse, selectedPartner) => ({
+  userId: order.userId,
+  orderIds: [order._id],
+  partnerOrderId: safe(carrierResponse.shipmentId, "N/A"),
+  awbNumber: safe(carrierResponse.awb, "N/A"),
+  shipmentId: safe(carrierResponse.shipmentId, "N/A"),
+  label: safe(carrierResponse.labelUrl, ""),
+  trackingUrl: safe(carrierResponse.tracking_url, ""),
+  status: "booked",
+  priceForCustomer: safe(shippingCost, 0),
+  partnerDetails: {
+    name: safe(selectedPartner, "N/A"),
+    id: safe(carrierResponse.partnerId, "N/A"),
+    charges: safe(shippingCost, 0),
+  },
+  pickupAddress: {
+    addressLine1: safe(pickupWarehouse.address, "N/A"),
+    pincode: safe(pickupWarehouse.pincode, "000000"),
+    mobile: safe(pickupWarehouse.managerMobile, "0000000000"),
+    name: safe(pickupWarehouse.managerName, "N/A"),
+  },
+  returnAddress: {
+    addressLine1: safe(rtoWarehouse.address, "N/A"),
+    pincode: safe(rtoWarehouse.pincode, "000000"),
+    mobile: safe(rtoWarehouse.managerMobile, "0000000000"),
+    name: safe(rtoWarehouse.managerName, "N/A"),
+  },
+  consignee: safe(order.consignee, "N/A"),
+  warehouseId: safe(pickupWarehouse._id, "N/A"),
+});
+
+const buildTransactionData = ({
+  userId,
+  shippingCost,
+  selectedPartner,
+  carrierResponse,
+  order,
+  newShipping,
+  userWallet = 0,
+}) => ({
+  userId,
+  type: ["wallet", "shipping"],
+  debitAmount: shippingCost,
+  creditAmount: 0,
+  amount: shippingCost,
+  currency: "INR",
+  balance: userWallet, // If you have wallet logic, pass the updated balance
+  description: `Shipping charges for order ${order._id}`,
+  status: "success",
+  transactionMode: "debit",
+  transactionId: `TRANS-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  courier: selectedPartner,
+  awbNumber: carrierResponse.awb || carrierResponse.awbNumber || newShipping.awbNumber,
+  shipmentId: carrierResponse.shipmentId || newShipping.shipmentId,
+  freightCharges: shippingCost,
+  partnerOrderId: carrierResponse.partnerOrderId || newShipping.partnerOrderId,
+  label: carrierResponse.labelUrl || newShipping.label,
+  trackingUrl: carrierResponse.tracking_url || newShipping.trackingUrl,
+  // Add more fields as needed from carrierResponse or newShipping
+});
+
 const createForwardShipping = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -327,48 +390,30 @@ const createForwardShipping = async (req, res) => {
         }
 
         // Save the AWB and shipment details to the database
-        const newShipping = new Shipping({
-          userId,
-          orderIds: [order._id],
-          partnerOrderId: carrierResponse.shipmentId,
-          awbNumber: carrierResponse.awb, // Use AWB from the vendor's response
-          shipmentId: carrierResponse.shipmentId,
-          label: carrierResponse.labelUrl,
-          trackingUrl: carrierResponse.tracking_url,
-          status: "booked",
-          partnerDetails: {
-            name: selectedPartner,
-            charges: shippingCost,
-          },
-        });
-
+        const shippingData = buildShippingData(order, pickupWarehouse, rtoWarehouse, shippingCost, carrierResponse, selectedPartner);
+        const newShipping = new Shipping(shippingData);
         await newShipping.save();
+
+        // If you have wallet logic, fetch the latest balance here
+        const user = await User.findById(userId);
+        const userWallet = user ? user.wallet : 0;
+
+        const transactionData = buildTransactionData({
+          userId,
+          shippingCost,
+          selectedPartner,
+          carrierResponse,
+          order,
+          newShipping,
+          userWallet,
+        });
+        const transaction = new Transaction(transactionData);
+        await transaction.save();
 
         // Update the order to mark it as shipped
         await Order.findByIdAndUpdate(order._id, {
           $set: { shipped: true, shipping: newShipping._id },
         });
-
-        // Create a transaction for the shipping
-        const transaction = new Transaction({
-          userId,
-          type: ["wallet", "shipping"],
-          debitAmount: shippingCost,
-          creditAmount: 0,
-          amount: shippingCost,
-          currency: "INR",
-          balance: 0, // Update this with the user's wallet balance if applicable
-          description: `Shipping charges for order ${order._id}`,
-          status: "success",
-          transactionMode: "debit",
-          transactionId: `TRANS-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          courier: selectedPartner,
-          awbNumber: carrierResponse.awb,
-          shipmentId: carrierResponse.shipmentId,
-          freightCharges: shippingCost,
-        });
-
-        await transaction.save();
 
         processedOrders.push(order._id);
       } catch (error) {
