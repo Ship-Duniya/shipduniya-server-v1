@@ -91,7 +91,7 @@ const fetchCityStateFromPincode = async (pincode) => {
   }
 };
 
-const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, selectedService) => {
+const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost) => {
   try {
     const token = await getXpressbeesToken();
 
@@ -109,11 +109,6 @@ const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, se
       pickupWarehouse.state = state;
     }
 
-    // Validate selectedService
-    if (!selectedService) {
-      throw new Error("Selected service is required for booking");
-    }
-
     // Construct payload
     const payload = {
       order_number: order.orderId,
@@ -128,7 +123,6 @@ const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, se
       package_breadth: order.breadth,
       package_height: order.height,
       request_auto_pickup: "yes",
-      service_type: selectedService, // Include selected service type
       consignee: {
         name: order.consignee,
         address: order.consigneeAddress1,
@@ -209,7 +203,7 @@ const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, se
   }
 };
 
-const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, selectedService) => {
+const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost) => {
   try {
     const token = await getDelhiveryToken();
     const formData = new FormData();
@@ -231,7 +225,6 @@ const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, sel
         consignee_city: order.city,
         consignee_state: order.state,
         weight: order.actualWeight,
-        service_type: selectedService // Include selected service type
       }]
     }));
 
@@ -251,6 +244,68 @@ const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, sel
       awb: response.data.waybill,
       shipmentId: response.data.shipment_id,
       tracking_url: `https://www.delhivery.com/track/${response.data.waybill}`,
+      partnerData: response.data,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+    };
+  }
+};
+
+const createEcomShipment = async (order, pickupWarehouse, shippingCost) => {
+  try {
+    const response = await axios.post(
+      "https://api.ecomexpress.in/shipment",
+      {
+        order_number: order.orderId,
+        payment_type: order.orderType.toLowerCase() === "cod" ? "cod" : "prepaid",
+        package_weight: order.actualWeight,
+        package_length: order.length,
+        package_breadth: order.breadth,
+        package_height: order.height,
+        consignee: {
+          name: order.consignee,
+          address: order.consigneeAddress1,
+          address_2: order.consigneeAddress2 || "",
+          city: order.city,
+          state: order.state,
+          pincode: order.pincode,
+          phone: order.mobile,
+        },
+        pickup: {
+          warehouse_name: pickupWarehouse.name || "Default Warehouse",
+          name: pickupWarehouse.managerName || "Warehouse Manager",
+          address: pickupWarehouse.address || "Default Address",
+          city: pickupWarehouse.city,
+          state: pickupWarehouse.state,
+          pincode: pickupWarehouse.pincode,
+          phone: pickupWarehouse.managerMobile || "0000000000",
+        },
+        order_items: [
+          {
+            name: order.itemDescription || "Item",
+            qty: order.quantity,
+            price: order.declaredValue,
+            sku: order.orderId,
+          },
+        ],
+        collectable_amount: order.orderType.toLowerCase() === "cod" ? order.collectableValue : 0,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ECOM_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return {
+      success: true,
+      awb: response.data.awb_number,
+      shipmentId: response.data.shipment_id,
+      tracking_url: response.data.tracking_url || null,
       partnerData: response.data,
     };
   } catch (error) {
@@ -329,17 +384,13 @@ const createForwardShipping = async (req, res) => {
     const userId = req.user.id;
     const { orderIds, pickup, rto, selectedPartner } = req.body;
 
-    // Automatically set selectedService based on selectedPartner
-    const selectedService = selectedPartner;
-
-    // Log the selected service for debugging
-    console.log("Selected Service:", selectedService);
-
     // Normalize partner name
     const normalizedPartner = selectedPartner.toLowerCase().includes("xpressbees")
       ? "xpressbees"
       : selectedPartner.toLowerCase().includes("delhivery")
       ? "delhivery"
+      : selectedPartner.toLowerCase().includes("ecom")
+      ? "ecom"
       : null;
 
     if (!normalizedPartner) {
@@ -369,16 +420,21 @@ const createForwardShipping = async (req, res) => {
             carrierResponse = await createXpressbeesShipment(
               order,
               pickupWarehouse,
-              shippingCost,
-              selectedService
+              shippingCost
             );
             break;
           case "delhivery":
             carrierResponse = await createDelhiveryShipment(
               order,
               pickupWarehouse,
-              shippingCost,
-              selectedService
+              shippingCost
+            );
+            break;
+          case "ecom":
+            carrierResponse = await createEcomShipment(
+              order,
+              pickupWarehouse,
+              shippingCost
             );
             break;
           default:
