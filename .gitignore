@@ -6,3 +6,7 @@
 
 # Ignore all PDF invoices
 /invoices/*.pdf
+
+services/file/*.json
+encoded-key.txt
+/tmp/gcp-key.json

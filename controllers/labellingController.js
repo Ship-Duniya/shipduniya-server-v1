@@ -1,20 +1,31 @@
 const { Storage } = require("@google-cloud/storage");
 const bwipjs = require("bwip-js");
-const path = require("path");
 
-const storage = new Storage({
-  keyFilename: process.env.GCP_KEY_FILE_PATH || // Use env variable first
-    path.join(__dirname, "../services/file/my-label.json"),
-  projectId: process.env.GCP_PROJECT_ID // Add project ID
-});
-
+// Validate environment variables first
 const bucketName = process.env.GCP_BUCKET_NAME;
+const gcpSAKeyBase64 = process.env.GCP_SA_KEY_BASE64;
+const projectId = process.env.GCP_PROJECT_ID;
 
-if (!bucketName || !process.env.GCP_KEY_FILE_PATH) {
+if (!bucketName || !gcpSAKeyBase64 || !projectId) {
   throw new Error(
-    "GCP bucket name or key file path is missing in environment variables."
+    "Missing GCP configuration in environment variables. Ensure GCP_BUCKET_NAME, GCP_SA_KEY_BASE64, and GCP_PROJECT_ID are set."
   );
 }
+
+// Parse service account credentials
+let credentials;
+try {
+  const keyFileString = Buffer.from(gcpSAKeyBase64, "base64").toString("utf-8");
+  credentials = JSON.parse(keyFileString);
+} catch (error) {
+  throw new Error("Failed to parse GCP service account key: " + error.message);
+}
+
+// Initialize Storage with credentials
+const storage = new Storage({
+  credentials,
+  projectId,
+});
 
 const generateBulkLabels = async (req, res) => {
   try {
@@ -50,16 +61,20 @@ const generateBulkLabels = async (req, res) => {
           });
         }
 
-        // Generate a signed URL for temporary access (valid for 7 days)
+        // Generate signed URL valid for 7 days
         const [signedUrl] = await file.getSignedUrl({
           action: "read",
-          expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days from now
+          expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
         });
 
         labels.push({ awb, labelUrl: signedUrl });
       } catch (error) {
         console.error(`Failed to generate label for AWB: ${awb}`, error.stack);
-        labels.push({ awb, labelUrl: null, error: error.message });
+        labels.push({
+          awb,
+          labelUrl: null,
+          error: error.message,
+        });
       }
     }
 
@@ -80,7 +95,7 @@ const generateBulkLabels = async (req, res) => {
 
 const getBarcodeUrl = async (req, res) => {
   try {
-    const { awb } = req.body; // Get AWB number from query params
+    const { awb } = req.body;
 
     if (!awb) {
       return res.status(400).json({
@@ -92,9 +107,7 @@ const getBarcodeUrl = async (req, res) => {
     const fileName = `labels/label-${awb}.png`;
     const file = storage.bucket(bucketName).file(fileName);
 
-    // Check if the file exists
     const [fileExists] = await file.exists();
-
     if (!fileExists) {
       return res.status(404).json({
         success: false,
@@ -102,13 +115,12 @@ const getBarcodeUrl = async (req, res) => {
       });
     }
 
-    // Generate a signed URL (valid for 7 days)
     const [signedUrl] = await file.getSignedUrl({
       action: "read",
-      expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+      expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       awb,
       barcodeUrl: signedUrl,
