@@ -13,6 +13,23 @@ function extractWeightFromCarrierName(carrierName) {
   return weightMatch ? parseFloat(weightMatch[1]) : 0;
 }
 
+// Utility function to get the multiplier based on carrier and customer type
+const getMultiplier = (carrier, customerType) => {
+  const multiplierMaps = {
+    xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
+    delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+    ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+    default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
+  };
+
+  const carrierKey = carrier.toLowerCase();
+  return (
+    multiplierMaps[carrierKey]?.[customerType.toLowerCase()] ||
+    multiplierMaps.default[customerType.toLowerCase()] ||
+    1
+  );
+};
+
 async function calculateCharges(req, res) {
   const {
     chargeableWeight,
@@ -45,17 +62,6 @@ async function calculateCharges(req, res) {
     }
 
     const customerType = userProfile.customerType.toLowerCase();
-    const multiplierMaps = {
-      xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
-      delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
-      ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
-      default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
-    };
-
-    const getMultiplier = (carrier) =>
-      multiplierMaps[carrier]?.[customerType] ||
-      multiplierMaps.default[customerType] ||
-      1;
 
     // Normalize product type for consistent comparison
     const normalizedProductType = productType.toLowerCase();
@@ -84,7 +90,7 @@ async function calculateCharges(req, res) {
       }
 
       if (chargeableWeight <= partner.chargeableWeight) {
-        const multiplier = getMultiplier(partner.carrierName.toLowerCase());
+        const multiplier = getMultiplier(partner.carrierName, customerType);
         const freightCharge = partner.freight * chargeableWeight;
         const codCharge =
           normalizedProductType === "cod"
@@ -148,7 +154,7 @@ async function calculateCharges(req, res) {
 
     // Process Xpressbees charges
     if (xpressbeesCharges?.services) {
-      const multiplier = getMultiplier("xpressbees");
+      const multiplier = getMultiplier("xpressbees", customerType);
       xpressbeesCharges.services.forEach((service) => {
         const baseCod = service.cod_charges || 0;
         const baseFreight = service.freight_charges || 0;
@@ -167,7 +173,7 @@ async function calculateCharges(req, res) {
 
     // Process Delhivery charges
     if (delhiveryCharges?.services) {
-      const multiplier = getMultiplier("delhivery");
+      const multiplier = getMultiplier("delhivery", customerType);
       delhiveryCharges.services.forEach((service) => {
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
@@ -184,59 +190,31 @@ async function calculateCharges(req, res) {
       });
     }
 
-    // Process Ecom charges with enhanced logging
-    // Process Ecom Express charges
+    // Process Ecom charges
     if (ecomCharges?.services) {
-      const multiplier = getMultiplier("ecom");
-      console.log(
-        "Processing Ecom charges with multiplier:",
-        multiplier,
-        "for customer type:",
-        customerType
-      );
-
+      const multiplier = getMultiplier("ecom", customerType);
       ecomCharges.services.forEach((service) => {
         const baseTotal = service.total_charges || 0;
         const baseCod = service.cod_charge || 0;
         const baseFreight = service.freight_charge || 0;
 
-        const charge = {
+        chargesBreakdown.push({
           carrierName: "Ecom",
           serviceType: service.name,
           totalPrice: baseTotal * multiplier,
           codCharge: baseCod * multiplier,
           freightCharge: baseFreight * multiplier,
           otherCharges: (baseTotal - baseCod - baseFreight) * multiplier,
-        };
-
-        console.log("Adding Ecom charge:", charge);
-        chargesBreakdown.push(charge);
+        });
       });
     }
-
-    // Filter by carrier if specified (case insensitive)
-    if (carrierName) {
-      const targetCarrier = carrierName.toLowerCase();
-      chargesBreakdown = chargesBreakdown.filter(
-        (charge) => charge.carrierName.toLowerCase() === targetCarrier
-      );
-    }
-
-    console.log(
-      "Final Charges Breakdown:",
-      JSON.stringify(chargesBreakdown, null, 2)
-    );
 
     res.json({
       message: "Charges calculated successfully.",
       charges: chargesBreakdown,
     });
   } catch (error) {
-    console.error("Error calculating charges:", {
-      message: error.message,
-      stack: error.stack,
-      requestBody: req.body,
-    });
+    console.error("Error calculating charges:", error);
     res.status(500).json({
       message: "Error calculating charges.",
       error: error.message,
@@ -255,21 +233,6 @@ async function calculateShippingCharges(req, res) {
     }
 
     const customerType = userProfile.customerType.toLowerCase();
-    const multiplierMaps = {
-      xpressbees: { bronze: 3, silver: 2.5, gold: 2.2, platinum: 2 },
-      delhivery: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
-      ecom: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
-      default: { bronze: 2.5, silver: 2.3, gold: 2, platinum: 1.8 },
-    };
-
-    const getMultiplier = (carrier) => {
-      const carrierKey = carrier.toLowerCase();
-      return (
-        multiplierMaps[carrierKey]?.[customerType] ||
-        multiplierMaps.default[customerType] ||
-        1
-      );
-    };
 
     let originPincode;
     if (pickUpWareHouse === "Ship Duniya") {
@@ -327,7 +290,7 @@ async function calculateShippingCharges(req, res) {
 
       if (carrierResponse?.services) {
         carrierResponse.services.forEach((service) => {
-          const multiplier = getMultiplier(requestedCarrier);
+          const multiplier = getMultiplier(requestedCarrier, customerType);
           const baseTotal = service.total_charges || 0;
           const baseCod = service.cod_charge || 0;
           const baseFreight = service.freight_charge || 0;
