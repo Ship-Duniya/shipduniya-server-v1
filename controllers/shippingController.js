@@ -18,7 +18,7 @@ const axios = require("axios");
 const getCharges = (customerType, deliveryPartnerName, cod, freight) => {
   // Skip validation for Xpressbees
   if (deliveryPartnerName.toLowerCase() === "xpressbees") {
-    const total_charges = freight + cod; // Simplified calculation for Xpressbees
+    const total_charges = freight + cod;
     return total_charges;
   }
 
@@ -293,7 +293,6 @@ const createForwardShipping = async (req, res) => {
       Warehouse.findById(rto),
     ]);
 
-    let totalShippingCost = 0;
     const processedOrders = [];
     const failedOrders = [];
 
@@ -308,7 +307,7 @@ const createForwardShipping = async (req, res) => {
               order,
               pickupWarehouse,
               shippingCost,
-              selectedService // Pass the derived selected service
+              selectedService
             );
             break;
           case "delhivery":
@@ -316,7 +315,7 @@ const createForwardShipping = async (req, res) => {
               order,
               pickupWarehouse,
               shippingCost,
-              selectedService // Pass the derived selected service
+              selectedService
             );
             break;
           default:
@@ -326,6 +325,50 @@ const createForwardShipping = async (req, res) => {
         if (!carrierResponse.success) {
           throw new Error(`Carrier API failed: ${carrierResponse.error}`);
         }
+
+        // Save the AWB and shipment details to the database
+        const newShipping = new Shipping({
+          userId,
+          orderIds: [order._id],
+          partnerOrderId: carrierResponse.shipmentId,
+          awbNumber: carrierResponse.awb, // Use AWB from the vendor's response
+          shipmentId: carrierResponse.shipmentId,
+          label: carrierResponse.labelUrl,
+          trackingUrl: carrierResponse.tracking_url,
+          status: "booked",
+          partnerDetails: {
+            name: selectedPartner,
+            charges: shippingCost,
+          },
+        });
+
+        await newShipping.save();
+
+        // Update the order to mark it as shipped
+        await Order.findByIdAndUpdate(order._id, {
+          $set: { shipped: true, shipping: newShipping._id },
+        });
+
+        // Create a transaction for the shipping
+        const transaction = new Transaction({
+          userId,
+          type: ["wallet", "shipping"],
+          debitAmount: shippingCost,
+          creditAmount: 0,
+          amount: shippingCost,
+          currency: "INR",
+          balance: 0, // Update this with the user's wallet balance if applicable
+          description: `Shipping charges for order ${order._id}`,
+          status: "success",
+          transactionMode: "debit",
+          transactionId: `TRANS-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          courier: selectedPartner,
+          awbNumber: carrierResponse.awb,
+          shipmentId: carrierResponse.shipmentId,
+          freightCharges: shippingCost,
+        });
+
+        await transaction.save();
 
         processedOrders.push(order._id);
       } catch (error) {
