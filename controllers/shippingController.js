@@ -91,7 +91,7 @@ const fetchCityStateFromPincode = async (pincode) => {
   }
 };
 
-const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, selectedService) => {
+const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost) => {
   try {
     const token = await getXpressbeesToken();
 
@@ -109,11 +109,6 @@ const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, se
       pickupWarehouse.state = state;
     }
 
-    // Validate selectedService
-    if (!selectedService) {
-      throw new Error("Selected service is required for booking");
-    }
-
     // Construct payload
     const payload = {
       order_number: order.orderId,
@@ -128,7 +123,6 @@ const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, se
       package_breadth: order.breadth,
       package_height: order.height,
       request_auto_pickup: "yes",
-      service_type: selectedService, // Include selected service type
       consignee: {
         name: order.consignee,
         address: order.consigneeAddress1,
@@ -209,7 +203,7 @@ const createXpressbeesShipment = async (order, pickupWarehouse, shippingCost, se
   }
 };
 
-const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, selectedService) => {
+const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost) => {
   try {
     const token = await getDelhiveryToken();
     const formData = new FormData();
@@ -231,7 +225,6 @@ const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, sel
         consignee_city: order.city,
         consignee_state: order.state,
         weight: order.actualWeight,
-        service_type: selectedService // Include selected service type
       }]
     }));
 
@@ -261,22 +254,143 @@ const createDelhiveryShipment = async (order, pickupWarehouse, shippingCost, sel
   }
 };
 
+const createEcomShipment = async (order, pickupWarehouse, shippingCost) => {
+  try {
+    const response = await axios.post(
+      "https://api.ecomexpress.in/shipment",
+      {
+        order_number: order.orderId,
+        payment_type: order.orderType.toLowerCase() === "cod" ? "cod" : "prepaid",
+        package_weight: order.actualWeight,
+        package_length: order.length,
+        package_breadth: order.breadth,
+        package_height: order.height,
+        consignee: {
+          name: order.consignee,
+          address: order.consigneeAddress1,
+          address_2: order.consigneeAddress2 || "",
+          city: order.city,
+          state: order.state,
+          pincode: order.pincode,
+          phone: order.mobile,
+        },
+        pickup: {
+          warehouse_name: pickupWarehouse.name || "Default Warehouse",
+          name: pickupWarehouse.managerName || "Warehouse Manager",
+          address: pickupWarehouse.address || "Default Address",
+          city: pickupWarehouse.city,
+          state: pickupWarehouse.state,
+          pincode: pickupWarehouse.pincode,
+          phone: pickupWarehouse.managerMobile || "0000000000",
+        },
+        order_items: [
+          {
+            name: order.itemDescription || "Item",
+            qty: order.quantity,
+            price: order.declaredValue,
+            sku: order.orderId,
+          },
+        ],
+        collectable_amount: order.orderType.toLowerCase() === "cod" ? order.collectableValue : 0,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ECOM_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return {
+      success: true,
+      awb: response.data.awb_number,
+      shipmentId: response.data.shipment_id,
+      tracking_url: response.data.tracking_url || null,
+      partnerData: response.data,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+    };
+  }
+};
+
+const safe = (val, def = "") => (val !== undefined && val !== null ? val : def);
+
+const buildShippingData = (order, pickupWarehouse, rtoWarehouse, shippingCost, carrierResponse, selectedPartner) => ({
+  userId: order.userId,
+  orderIds: [order._id],
+  partnerOrderId: safe(carrierResponse.shipmentId, "N/A"),
+  awbNumber: safe(carrierResponse.awb, "N/A"),
+  shipmentId: safe(carrierResponse.shipmentId, "N/A"),
+  label: safe(carrierResponse.labelUrl, ""),
+  trackingUrl: safe(carrierResponse.tracking_url, ""),
+  status: "booked",
+  priceForCustomer: safe(shippingCost, 0),
+  partnerDetails: {
+    name: safe(selectedPartner, "N/A"),
+    id: safe(carrierResponse.partnerId, "N/A"),
+    charges: safe(shippingCost, 0),
+  },
+  pickupAddress: {
+    addressLine1: safe(pickupWarehouse.address, "N/A"),
+    pincode: safe(pickupWarehouse.pincode, "000000"),
+    mobile: safe(pickupWarehouse.managerMobile, "0000000000"),
+    name: safe(pickupWarehouse.managerName, "N/A"),
+  },
+  returnAddress: {
+    addressLine1: safe(rtoWarehouse.address, "N/A"),
+    pincode: safe(rtoWarehouse.pincode, "000000"),
+    mobile: safe(rtoWarehouse.managerMobile, "0000000000"),
+    name: safe(rtoWarehouse.managerName, "N/A"),
+  },
+  consignee: safe(order.consignee, "N/A"),
+  warehouseId: safe(pickupWarehouse._id, "N/A"),
+});
+
+const buildTransactionData = ({
+  userId,
+  shippingCost,
+  selectedPartner,
+  carrierResponse,
+  order,
+  newShipping,
+  userWallet = 0,
+}) => ({
+  userId,
+  type: ["wallet", "shipping"],
+  debitAmount: shippingCost,
+  creditAmount: 0,
+  amount: shippingCost,
+  currency: "INR",
+  balance: userWallet, // If you have wallet logic, pass the updated balance
+  description: `Shipping charges for order ${order._id}`,
+  status: "success",
+  transactionMode: "debit",
+  transactionId: `TRANS-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  courier: selectedPartner,
+  awbNumber: carrierResponse.awb || carrierResponse.awbNumber || newShipping.awbNumber,
+  shipmentId: carrierResponse.shipmentId || newShipping.shipmentId,
+  freightCharges: shippingCost,
+  partnerOrderId: carrierResponse.partnerOrderId || newShipping.partnerOrderId,
+  label: carrierResponse.labelUrl || newShipping.label,
+  trackingUrl: carrierResponse.tracking_url || newShipping.trackingUrl,
+  // Add more fields as needed from carrierResponse or newShipping
+});
+
 const createForwardShipping = async (req, res) => {
   try {
     const userId = req.user.id;
     const { orderIds, pickup, rto, selectedPartner } = req.body;
-
-    // Automatically set selectedService based on selectedPartner
-    const selectedService = selectedPartner;
-
-    // Log the selected service for debugging
-    console.log("Selected Service:", selectedService);
 
     // Normalize partner name
     const normalizedPartner = selectedPartner.toLowerCase().includes("xpressbees")
       ? "xpressbees"
       : selectedPartner.toLowerCase().includes("delhivery")
       ? "delhivery"
+      : selectedPartner.toLowerCase().includes("ecom")
+      ? "ecom"
       : null;
 
     if (!normalizedPartner) {
@@ -306,16 +420,21 @@ const createForwardShipping = async (req, res) => {
             carrierResponse = await createXpressbeesShipment(
               order,
               pickupWarehouse,
-              shippingCost,
-              selectedService
+              shippingCost
             );
             break;
           case "delhivery":
             carrierResponse = await createDelhiveryShipment(
               order,
               pickupWarehouse,
-              shippingCost,
-              selectedService
+              shippingCost
+            );
+            break;
+          case "ecom":
+            carrierResponse = await createEcomShipment(
+              order,
+              pickupWarehouse,
+              shippingCost
             );
             break;
           default:
@@ -327,48 +446,30 @@ const createForwardShipping = async (req, res) => {
         }
 
         // Save the AWB and shipment details to the database
-        const newShipping = new Shipping({
-          userId,
-          orderIds: [order._id],
-          partnerOrderId: carrierResponse.shipmentId,
-          awbNumber: carrierResponse.awb, // Use AWB from the vendor's response
-          shipmentId: carrierResponse.shipmentId,
-          label: carrierResponse.labelUrl,
-          trackingUrl: carrierResponse.tracking_url,
-          status: "booked",
-          partnerDetails: {
-            name: selectedPartner,
-            charges: shippingCost,
-          },
-        });
-
+        const shippingData = buildShippingData(order, pickupWarehouse, rtoWarehouse, shippingCost, carrierResponse, selectedPartner);
+        const newShipping = new Shipping(shippingData);
         await newShipping.save();
+
+        // If you have wallet logic, fetch the latest balance here
+        const user = await User.findById(userId);
+        const userWallet = user ? user.wallet : 0;
+
+        const transactionData = buildTransactionData({
+          userId,
+          shippingCost,
+          selectedPartner,
+          carrierResponse,
+          order,
+          newShipping,
+          userWallet,
+        });
+        const transaction = new Transaction(transactionData);
+        await transaction.save();
 
         // Update the order to mark it as shipped
         await Order.findByIdAndUpdate(order._id, {
           $set: { shipped: true, shipping: newShipping._id },
         });
-
-        // Create a transaction for the shipping
-        const transaction = new Transaction({
-          userId,
-          type: ["wallet", "shipping"],
-          debitAmount: shippingCost,
-          creditAmount: 0,
-          amount: shippingCost,
-          currency: "INR",
-          balance: 0, // Update this with the user's wallet balance if applicable
-          description: `Shipping charges for order ${order._id}`,
-          status: "success",
-          transactionMode: "debit",
-          transactionId: `TRANS-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          courier: selectedPartner,
-          awbNumber: carrierResponse.awb,
-          shipmentId: carrierResponse.shipmentId,
-          freightCharges: shippingCost,
-        });
-
-        await transaction.save();
 
         processedOrders.push(order._id);
       } catch (error) {
